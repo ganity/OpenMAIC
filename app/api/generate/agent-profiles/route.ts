@@ -86,7 +86,7 @@ export async function POST(req: NextRequest) {
           .join('\n')
       : null;
 
-    const systemPrompt = `You are an expert instructional designer. Generate agent profiles for a multi-agent classroom simulation. Decide the appropriate number of agents (typically 3-5) based on the course content and complexity. Return ONLY valid JSON, no markdown or explanation.`;
+    const systemPrompt = `You are an expert enterprise learning strategist. Generate agent profiles for a multi-agent company training course positioning discussion. Decide the appropriate number of agents (typically 3-5) based on the course topic and organizational complexity. Keep the role values compatible with the existing system: exactly one \"teacher\" agent as the lead consultant, and the rest as \"assistant\" or \"student\" style stakeholder voices. Return ONLY valid JSON, no markdown or explanation.`;
 
     // Build voice list for prompt (if available)
     const voiceListStr =
@@ -101,7 +101,7 @@ export async function POST(req: NextRequest) {
 
     const voicePrompt = voiceListStr
       ? `- Each agent should be assigned a voice that matches their persona from this list: ${voiceListStr}
-  - Pick a voice that suits the agent's personality and role (e.g. authoritative voice for teacher, lively voice for energetic student)
+  - Pick a voice that suits the agent's professional style and role (e.g. authoritative for lead consultant, practical for stakeholder, clear and structured for instructional designer)
   - Try to use different voices for each agent`
       : '';
 
@@ -109,16 +109,17 @@ export async function POST(req: NextRequest) {
       ? ',\n      "voice": "string (voice id from available list, e.g. \'qwen-tts::Cherry\')"'
       : '';
 
-    const userPrompt = `Generate agent profiles for the following course:
+    const userPrompt = `Generate agent profiles for the following company training course discussion:
 
 Course name: ${stageInfo.name}
 ${stageInfo.description ? `Course description: ${stageInfo.description}` : ''}
 ${sceneSummary ? `\nScene outlines:\n${sceneSummary}\n` : ''}
 Requirements:
-- Decide the appropriate number of agents based on the course content (typically 3-5)
-- Exactly 1 agent must have role "teacher", the rest can be "assistant" or "student"
+- Decide the appropriate number of agents based on the training topic and organizational complexity (typically 3-5)
+- Exactly 1 agent must have role "teacher"; this role represents the lead training consultant
+- The remaining agents can be "assistant" or "student", but their personas should represent learning design, business, learner, or organization stakeholder perspectives
 - Priority values: teacher=10 (highest), assistant=7, student=4-6
-- Each agent needs: name, role, persona (2-3 sentences describing personality and teaching/learning style)
+- Each agent needs: name, role, persona (2-3 sentences describing their professional perspective, responsibilities, and discussion style for company training course positioning)
 - Names and personas must be in language: ${language}
 - Each agent must be assigned one avatar from this list: ${JSON.stringify(avatarDescriptions && avatarDescriptions.length > 0 ? avatarDescriptions.map((a) => ({ path: a.path, description: a.desc })) : availableAvatars)}
   - Pick an avatar that visually matches the agent's personality and role

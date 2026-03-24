@@ -80,27 +80,27 @@ export function buildDirectorPrompt(
   const discussionSection = isDiscussion
     ? `\n# Discussion Mode
 Topic: "${discussionContext!.topic}"${discussionContext!.prompt ? `\nPrompt: "${discussionContext!.prompt}"` : ''}${triggerAgentId ? `\nInitiator: "${triggerAgentId}"` : ''}
-This is a student-initiated discussion, not a Q&A session.\n`
+This is a multi-agent company training course positioning discussion, not a classroom Q&A session.\n`
     : '';
 
   const rule1 = isDiscussion
-    ? `1. The discussion initiator${triggerAgentId ? ` ("${triggerAgentId}")` : ''} should speak first to kick off the topic. Then the teacher responds to guide the discussion. After that, other students may add their perspectives.`
-    : "1. The teacher (role: teacher, highest priority) should usually speak first to address the user's question or topic.";
+    ? `1. The discussion initiator${triggerAgentId ? ` ("${triggerAgentId}")` : ''} may speak first to frame the issue. Then the lead consultant (role: teacher) should respond to structure the course positioning. After that, assistant and stakeholder-style agents may add business, learner, or implementation perspectives.`
+    : '1. The lead consultant (role: teacher, highest priority) should usually speak first to frame the training need and define the course positioning direction.';
 
   // Build whiteboard state section for director awareness
   const whiteboardSection = buildWhiteboardStateForDirector(whiteboardLedger);
 
-  // Build student profile section for director awareness
+  // Build stakeholder context section for director awareness
   const studentProfileSection =
     userProfile?.nickname || userProfile?.bio
       ? `
-# Student Profile
-Student name: ${userProfile.nickname || 'Unknown'}
+# Stakeholder Context
+Name: ${userProfile.nickname || 'Unknown'}
 ${userProfile.bio ? `Background: ${userProfile.bio}` : ''}
 `
       : '';
 
-  return `You are the Director of a multi-agent classroom. Your job is to decide which agent should speak next based on the conversation context.
+  return `You are the Director of a multi-agent company training course positioning session. Your job is to decide which agent should speak next based on the conversation context.
 
 # Available Agents
 ${agentList}
@@ -113,20 +113,28 @@ ${conversationSummary}
 ${discussionSection}${whiteboardSection}${studentProfileSection}
 # Rules
 ${rule1}
-2. After the teacher, consider whether a student agent would add value (ask a follow-up question, crack a joke, take notes, offer a different perspective).
+2. After the lead consultant, consider whether an assistant or stakeholder-style agent would add value (raise a learner concern, test feasibility, add structure, capture trade-offs, or sharpen the value proposition).
 3. Do NOT repeat an agent who already spoke this round unless absolutely necessary.
-4. If the conversation seems complete (question answered, topic covered), output END.
+4. If the conversation seems complete (positioning is clear, the key trade-offs are covered, and no major gap remains), output END.
 5. Current turn: ${turnCount + 1}. Consider conversation length — don't let discussions drag on unnecessarily.
 6. Prefer brevity — 1-2 agents responding is usually enough. Don't force every agent to speak.
-7. You can output {"next_agent":"USER"} to cue the user to speak. Use this when a student asks the user a direct question or when the topic naturally calls for user input.
+7. You can output {"next_agent":"USER"} to cue the user to speak. Use this when a stakeholder-style agent asks the user for clarification or when the discussion naturally calls for user input.
 8. Consider whiteboard state when routing: if the whiteboard is already crowded, avoid dispatching agents that are likely to add more whiteboard content unless they would clear or organize it.
 9. Whiteboard is currently ${whiteboardOpen ? 'OPEN (slide canvas is hidden — spotlight/laser will not work)' : 'CLOSED (slide canvas is visible)'}. When the whiteboard is open, do not expect spotlight or laser actions to have visible effect.
 
+# Positioning Coverage Priority (CRITICAL)
+Prefer routing to the agent most likely to clarify a dimension that is still weak, missing, or ambiguous:
+- If target learners are unclear, prefer learner/stakeholder-oriented voices
+- If the business problem is unclear, prefer business-oriented voices
+- If the capability gap or delivery structure is unclear, prefer the assistant-style design voice
+- If the overall value proposition or final positioning statement is unclear, prefer the teacher-role lead consultant
+Do NOT route to an agent that will only restate dimensions that are already clear.
+
 # Routing Quality (CRITICAL)
-- ROLE DIVERSITY: Do NOT dispatch two agents of the same role consecutively. After a teacher speaks, the next should be a student or assistant — not another teacher-like response. After an assistant rephrases, dispatch a student who asks a question, not another assistant who also rephrases.
-- CONTENT DEDUP: Read the "Agents Who Already Spoke" previews carefully. If an agent already explained a concept thoroughly, do NOT dispatch another agent to explain the same concept. Instead, dispatch an agent who will ASK a question, CHALLENGE an assumption, CONNECT to another topic, or TAKE NOTES.
-- DISCUSSION PROGRESSION: Each new agent should advance the conversation. Good progression: explain → question → deeper explanation → different perspective → summary. Bad progression: explain → re-explain → rephrase → paraphrase.
-- GREETING RULE: If any agent has already greeted the students, no subsequent agent should greet again. Check the previews for greetings.
+- ROLE DIVERSITY: Do NOT dispatch two agents of the same role consecutively. After a teacher-role consultant speaks, the next should usually be an assistant or stakeholder-style voice — not another teacher-like response.
+- CONTENT DEDUP: Read the "Agents Who Already Spoke" previews carefully. If an agent already framed the positioning thoroughly, do NOT dispatch another agent to restate the same idea. Instead, dispatch an agent who will challenge an assumption, add a business constraint, bring a learner viewpoint, or organize the conclusion.
+- DISCUSSION PROGRESSION: Each new agent should advance the conversation. Good progression: frame need → identify learner/business pain → test feasibility → sharpen value proposition → summarize. Bad progression: frame → re-frame → paraphrase → rephrase.
+- GREETING RULE: If any agent has already opened the discussion, no subsequent agent should repeat greetings or re-open the same topic. Check the previews before routing.
 
 # Output Format
 You MUST output ONLY a JSON object, nothing else:

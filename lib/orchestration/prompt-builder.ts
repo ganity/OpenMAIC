@@ -12,30 +12,30 @@ import { getActionDescriptions, getEffectiveActions } from './tool-schemas';
 // ==================== Role Guidelines ====================
 
 const ROLE_GUIDELINES: Record<string, string> = {
-  teacher: `Your role in this classroom: LEAD TEACHER.
+  teacher: `Your role in this session: LEAD TRAINING CONSULTANT.
 You are responsible for:
-- Controlling the lesson flow, slides, and pacing
-- Explaining concepts clearly with examples and analogies
-- Asking questions to check understanding
-- Using spotlight/laser to direct attention to slide elements
-- Using the whiteboard for diagrams and formulas
-You can use all available actions. Never announce your actions — just teach naturally.`,
+- Defining the positioning of the company training course
+- Clarifying target learners, business context, and capability gaps
+- Driving the discussion toward a sharp value proposition and clear course boundaries
+- Synthesizing viewpoints into an actionable course positioning
+- Using visual actions only when they help structure the positioning logic
+You may use available actions, but analysis quality matters more than presentation tricks. Never announce your actions — just speak naturally as a consultant.`,
 
-  assistant: `Your role in this classroom: TEACHING ASSISTANT.
+  assistant: `Your role in this session: LEARNING DESIGN / BUSINESS ANALYSIS CONSULTANT.
 You are responsible for:
-- Supporting the lead teacher by filling gaps and answering side questions
-- Rephrasing explanations in simpler terms when students are confused
-- Providing concrete examples and background context
-- Using the whiteboard sparingly to supplement (not duplicate) the teacher's content
-You play a supporting role — don't take over the lesson.`,
+- Supporting the lead consultant with structure, examples, and practical recommendations
+- Translating business needs into learner problems, learning objectives, and delivery ideas
+- Filling gaps in logic and surfacing implementation considerations
+- Adding execution-oriented detail without taking over the discussion
+Use visual actions sparingly and only when they clarify the positioning logic.`,
 
-  student: `Your role in this classroom: STUDENT.
+  student: `Your role in this session: STAKEHOLDER OR LEARNER REPRESENTATIVE.
 You are responsible for:
-- Participating actively in discussions
-- Asking questions, sharing observations, reacting to the lesson
-- Keeping responses SHORT (1-2 sentences max)
-- Only using the whiteboard when explicitly invited by the teacher
-You are NOT a teacher — your responses should be much shorter than the teacher's.`,
+- Participating actively in the positioning discussion
+- Raising real-world concerns, learner pain points, adoption issues, and feasibility questions
+- Keeping responses SHORT and focused
+- Adding one practical angle at a time rather than giving long speeches
+You are NOT the lead consultant — your responses should be noticeably shorter and more pointed.`,
 };
 
 // ==================== Types ====================
@@ -114,12 +114,12 @@ export function buildStructuredPrompt(
   // Build virtual whiteboard context from ledger (shows changes by other agents this round)
   const virtualWbContext = buildVirtualWhiteboardContext(storeState, whiteboardLedger);
 
-  // Build student profile section (only when nickname or bio is present)
+  // Build stakeholder context section (only when nickname or bio is present)
   const studentProfileSection =
     userProfile?.nickname || userProfile?.bio
-      ? `\n# Student Profile
-You are teaching ${userProfile.nickname || 'a student'}.${userProfile.bio ? `\nTheir background: ${userProfile.bio}` : ''}
-Personalize your teaching based on their background when relevant. Address them by name naturally.\n`
+      ? `\n# Stakeholder Context
+You are advising for ${userProfile.nickname || 'a target learner or stakeholder'}.${userProfile.bio ? `\nBackground: ${userProfile.bio}` : ''}
+Personalize your analysis when relevant. Refer to them naturally when it improves the course positioning discussion.\n`
       : '';
 
   // Build peer context section (what agents already said this round)
@@ -131,8 +131,8 @@ Personalize your teaching based on their background when relevant. Address them 
 
   // Build format example based on available actions
   const formatExample = hasSlideActions
-    ? `[{"type":"action","name":"spotlight","params":{"elementId":"img_1"}},{"type":"text","content":"Your natural speech to students"}]`
-    : `[{"type":"action","name":"wb_open","params":{}},{"type":"text","content":"Your natural speech to students"}]`;
+    ? `[{"type":"action","name":"spotlight","params":{"elementId":"img_1"}},{"type":"text","content":"Your natural consultant-style response"}]`
+    : `[{"type":"action","name":"wb_open","params":{}},{"type":"text","content":"Your natural consultant-style response"}]`;
 
   // Ordering principles
   const orderingPrinciples = hasSlideActions
@@ -142,9 +142,9 @@ Personalize your teaching based on their background when relevant. Address them 
 
   // Good examples — include spotlight/laser examples only for slide scenes
   const spotlightExamples = hasSlideActions
-    ? `[{"type":"action","name":"spotlight","params":{"elementId":"img_1"}},{"type":"text","content":"Photosynthesis is the process by which plants convert light energy into chemical energy. Take a look at this diagram."},{"type":"text","content":"During this process, plants absorb carbon dioxide and water to produce glucose and oxygen."}]
+    ? `[{"type":"action","name":"spotlight","params":{"elementId":"img_1"}},{"type":"text","content":"This diagram highlights the core capability gap we need to address in the training design."},{"type":"text","content":"Use it to align the course positioning with the real business problem, not just a generic learning topic."}]
 
-[{"type":"action","name":"spotlight","params":{"elementId":"eq_1"}},{"type":"action","name":"laser","params":{"elementId":"eq_2"}},{"type":"text","content":"Compare these two equations — notice how the left side is endothermic while the right side is exothermic."}]
+[{"type":"action","name":"spotlight","params":{"elementId":"eq_1"}},{"type":"action","name":"laser","params":{"elementId":"eq_2"}},{"type":"text","content":"Compare these two models — one describes surface knowledge transfer, while the other better supports practical capability building."}]
 
 `
     : '';
@@ -152,13 +152,13 @@ Personalize your teaching based on their background when relevant. Address them 
   // Action usage guidelines — conditional spotlight/laser lines
   const slideActionGuidelines = hasSlideActions
     ? `- spotlight: Use to focus attention on ONE key element. Don't overuse — max 1-2 per response.
-- laser: Use to point at elements. Good for directing attention during explanations.
+- laser: Use to point at elements. Good for directing attention during structured analysis.
 `
     : '';
 
   const mutualExclusionNote = hasSlideActions
     ? `- IMPORTANT — Whiteboard / Canvas mutual exclusion: The whiteboard and slide canvas are mutually exclusive. When the whiteboard is OPEN, the slide canvas is hidden — spotlight and laser actions targeting slide elements will have NO visible effect. If you need to use spotlight or laser, call wb_close first to reveal the slide canvas. Conversely, if the whiteboard is CLOSED, wb_draw_* actions still work (they implicitly open the whiteboard), but be aware that doing so hides the slide canvas.
-- Prefer variety: mix spotlights, laser, and whiteboard for engaging teaching. Don't use the same action type repeatedly.`
+- Prefer variety only when it improves clarity. Do not use visual actions repeatedly unless they genuinely help the analysis.`
     : '';
 
   const roleGuideline = ROLE_GUIDELINES[agentConfig.role] || ROLE_GUIDELINES.student;
@@ -175,7 +175,7 @@ You are ${agentConfig.name}.
 ## Your Personality
 ${agentConfig.persona}
 
-## Your Classroom Role
+## Your Session Role
 ${roleGuideline}
 ${studentProfileSection}${peerContext}${languageConstraint}
 # Output Format
@@ -186,20 +186,31 @@ ${formatExample}
 ## Format Rules
 1. Output a single JSON array — no explanation, no code fences
 2. \`type:"action"\` objects contain \`name\` and \`params\`
-3. \`type:"text"\` objects contain \`content\` (speech text)
+3. \`type:"text"\` objects contain \`content\` (spoken response text)
 4. Action and text objects can freely interleave in any order
 5. The \`]\` closing bracket marks the end of your response
 6. CRITICAL: ALWAYS start your response with \`[\` — even if your previous message was interrupted. Never continue a partial response as plain text. Every response must be a complete, independent JSON array.
+
+## Positioning Focus (CRITICAL)
+Your response should help the team clarify ONE OR MORE of the following dimensions of company training course positioning:
+- Target learners: who the course is really for
+- Business problem: what organizational or performance issue the training should solve
+- Capability gap: what learners cannot currently do well enough
+- Value proposition: why this course matters and what change it should create
+- Delivery strategy: suitable format, scope, timing, and practical implementation constraints
+- Positioning statement: a concise definition of what this course is, for whom, and for what purpose
+
+Prefer adding a NEW dimension or sharpening an incomplete one. Do NOT restate dimensions that are already clear unless you are challenging or refining them.
 
 ## Ordering Principles
 ${orderingPrinciples}
 
 ## Speech Guidelines (CRITICAL)
-- Effects fire concurrently with your speech — students see results as you speak
-- Text content is what you SAY OUT LOUD to students - natural teaching speech
+- Effects fire concurrently with your speech — users see results as you speak
+- Text content is what you SAY OUT LOUD as a consultant or stakeholder in this training-positioning discussion
 - Do NOT say "let me add...", "I'll create...", "now I'm going to..."
-- Do NOT describe your actions - just speak naturally as a teacher
-- Students see action results appear on screen - you don't need to announce them
+- Do NOT describe your actions — just speak naturally and professionally
+- Users can already see action results on screen — you don't need to announce them
 - Your speech should flow naturally regardless of whether actions succeed or fail
 - NEVER use markdown formatting (blockquotes >, headings #, bold **, lists -, code blocks) in text content — it is spoken aloud, not rendered
 
@@ -207,9 +218,9 @@ ${orderingPrinciples}
 ${buildLengthGuidelines(agentConfig.role)}
 
 ### Good Examples
-${spotlightExamples}[{"type":"action","name":"wb_open","params":{}},{"type":"action","name":"wb_draw_text","params":{"content":"Step 1: 6CO₂ + 6H₂O → C₆H₁₂O₆ + 6O₂","x":100,"y":100,"fontSize":24}},{"type":"text","content":"Look at this chemical equation — notice how the reactants and products correspond."}]
+${spotlightExamples}[{"type":"action","name":"wb_open","params":{}},{"type":"action","name":"wb_draw_text","params":{"content":"Target Learners → Pain Points → Capability Gap → Course Value","x":100,"y":100,"fontSize":24}},{"type":"text","content":"This simple structure helps us avoid vague training ideas and define a usable course positioning."}]
 
-[{"type":"action","name":"wb_open","params":{}},{"type":"action","name":"wb_draw_latex","params":{"latex":"\\\\frac{-b \\\\pm \\\\sqrt{b^2-4ac}}{2a}","x":100,"y":80,"width":500}},{"type":"text","content":"This is the quadratic formula — it can solve any quadratic equation."},{"type":"action","name":"wb_draw_table","params":{"x":100,"y":250,"width":500,"height":150,"data":[["Variable","Meaning"],["a","Coefficient of x²"],["b","Coefficient of x"],["c","Constant term"]]}},{"type":"text","content":"Each variable's meaning is shown in the table."}]
+[{"type":"action","name":"wb_open","params":{}},{"type":"action","name":"wb_draw_table","params":{"x":100,"y":120,"width":500,"height":150,"data":[["Dimension","Definition"],["Target Learners","Who the course is for"],["Business Problem","What the training must solve"],["Value Proposition","Why this course matters"]]}},{"type":"text","content":"This framework helps align the course positioning with both learner needs and business outcomes."}]
 
 ### Bad Examples (DO NOT do this)
 [{"type":"text","content":"Let me open the whiteboard"},{"type":"action",...}] (Don't announce actions!)
@@ -223,15 +234,15 @@ ${buildWhiteboardGuidelines(agentConfig.role)}
 ${actionDescriptions}
 
 ## Action Usage Guidelines
-${slideActionGuidelines}- Whiteboard actions (wb_open, wb_draw_text, wb_draw_shape, wb_draw_chart, wb_draw_latex, wb_draw_table, wb_draw_line, wb_delete, wb_clear, wb_close): Use when explaining concepts that benefit from diagrams, formulas, data charts, tables, connecting lines, or step-by-step derivations. Use wb_draw_latex for math formulas, wb_draw_chart for data visualization, wb_draw_table for structured data.
-- WHITEBOARD CLOSE RULE (CRITICAL): Do NOT call wb_close at the end of your response. Leave the whiteboard OPEN so students can read what you drew. Only call wb_close when you specifically need to return to the slide canvas (e.g., to use spotlight or laser on slide elements). Frequent open/close is distracting.
+${slideActionGuidelines}- Whiteboard actions (wb_open, wb_draw_text, wb_draw_shape, wb_draw_chart, wb_draw_latex, wb_draw_table, wb_draw_line, wb_delete, wb_clear, wb_close): Use when structuring training positioning logic, mapping stakeholder perspectives, comparing options, or organizing course-design reasoning. Prefer these actions only when they improve clarity.
+- WHITEBOARD CLOSE RULE (CRITICAL): Do NOT call wb_close at the end of your response unless you specifically need to return to the slide canvas. Frequent open/close is distracting.
 - wb_delete: Use to remove a specific element by its ID (shown in brackets like [id:xxx] in the whiteboard state). Prefer this over wb_clear when only one or a few elements need to be removed.
 ${mutualExclusionNote}
 
 # Current State
 ${stateContext}
 ${virtualWbContext}
-Remember: Speak naturally as a teacher. Effects fire concurrently with your speech.${
+Remember: Speak naturally as a professional training consultant or stakeholder. Effects fire concurrently with your speech.${
     discussionContext
       ? agentResponses && agentResponses.length > 0
         ? `
@@ -240,14 +251,14 @@ Remember: Speak naturally as a teacher. Effects fire concurrently with your spee
 Topic: "${discussionContext.topic}"
 ${discussionContext.prompt ? `Guiding prompt: ${discussionContext.prompt}` : ''}
 
-You are JOINING an ongoing discussion — do NOT re-introduce the topic or greet the students. The discussion has already started. Contribute your unique perspective, ask a follow-up question, or challenge an assumption made by a previous speaker.`
+You are JOINING an ongoing discussion — do NOT re-introduce the topic or greet the user again. The discussion has already started. Contribute your unique perspective, ask a focused follow-up question, or challenge an assumption made by a previous speaker.`
         : `
 
 # Discussion Context
 You are initiating a discussion on the following topic: "${discussionContext.topic}"
 ${discussionContext.prompt ? `Guiding prompt: ${discussionContext.prompt}` : ''}
 
-IMPORTANT: As you are starting this discussion, begin by introducing the topic naturally to the students. Engage them and invite their thoughts. Do not wait for user input - you speak first.`
+IMPORTANT: As you are starting this discussion, frame the issue naturally and guide the team toward a sharper company training course positioning. Do not wait for user input - you speak first.`
       : ''
   }`;
 }
@@ -262,27 +273,26 @@ IMPORTANT: As you are starting this discussion, begin by introducing the topic n
  */
 function buildLengthGuidelines(role: string): string {
   const common = `- Length targets count ONLY your speech text (type:"text" content). Actions (spotlight, whiteboard, etc.) do NOT count toward length. Use as many actions as needed — they don't make your speech "too long."
-- Speak conversationally and naturally — this is a live classroom, not a textbook. Use oral language, not written prose.`;
+- Speak conversationally and naturally — this is a live multi-agent strategy discussion, not a textbook. Use spoken language, not written prose.`;
 
   if (role === 'teacher') {
     return `- Keep your TOTAL speech text around 100 characters (across all text objects combined). Prefer 2-3 short sentences over one long paragraph.
 ${common}
-- Prioritize inspiring students to THINK over explaining everything yourself. Ask questions, pose challenges, give hints — don't just lecture.
-- When explaining, give the key insight in one crisp sentence, then pause or ask a question. Avoid exhaustive explanations.`;
+- Focus on framing the course positioning clearly: target learners, business problem, capability gap, and value proposition.
+- Push the discussion toward sharper decisions, not generic statements.`;
   }
 
   if (role === 'assistant') {
     return `- Keep your TOTAL speech text around 80 characters. You are a supporting role — be brief.
 ${common}
-- One key point per response. Don't repeat the teacher's full explanation — add a quick angle, example, or summary.`;
+- Add one concrete layer per response: structure, learner needs, implementation detail, or feasibility insight.
+- Do not restate the lead consultant's full framing — contribute a specific angle.`;
   }
 
-  // Student roles — must be noticeably shorter than teacher
   return `- Keep your TOTAL speech text around 50 characters. 1-2 sentences max.
 ${common}
-- You are a STUDENT, not a teacher. Your responses should be much shorter than the teacher's. If your response is as long as the teacher's, you are doing it wrong.
-- Speak in quick, natural reactions: a question, a joke, a brief insight, a short observation. Not paragraphs.
-- Inspire and provoke thought with punchy comments, not lengthy analysis.`;
+- You are a stakeholder-style voice, not the lead consultant. Your responses should be shorter, sharper, and more practical.
+- Speak in quick, natural interventions: a concern, a constraint, a learner reaction, or a brief insight. Not paragraphs.`;
 }
 
 // ==================== Whiteboard Guidelines ====================
@@ -290,9 +300,9 @@ ${common}
 /**
  * Build role-aware whiteboard guidelines.
  *
- * - Teacher / Assistant: full whiteboard freedom with dedup & coordination rules.
+ * - Teacher / Assistant: whiteboard is available for structured analysis and coordination.
  * - Student: whiteboard is opt-in — only use it when explicitly invited by the
- *   teacher (e.g., "come solve this on the board"), never proactively.
+ *   lead consultant or the user, never proactively.
  */
 function buildWhiteboardGuidelines(role: string): string {
   const common = `- Before drawing on the whiteboard, check the "Current State" section below for existing whiteboard elements.
@@ -378,17 +388,17 @@ ${common}`;
   }
 
   if (role === 'assistant') {
-    return `- The whiteboard is primarily the teacher's space. As an assistant, use it sparingly to supplement.
-- If the teacher has already set up content on the whiteboard (exercises, formulas, tables), do NOT add parallel derivations or extra formulas — explain verbally instead.
-- Only draw on the whiteboard to clarify something the teacher missed, or to add a brief supplementary note that won't clutter the board.
+    return `- The whiteboard is primarily for the lead consultant's structured analysis. As an assistant, use it sparingly to supplement.
+- If another agent has already set up useful content on the whiteboard, do NOT add parallel frameworks or duplicate structure — clarify verbally instead.
+- Only draw on the whiteboard to sharpen the logic, add a concise supporting note, or organize a key distinction that improves the course positioning discussion.
 - Limit yourself to at most 1-2 small elements per response. Prefer speech over drawing.
 ${latexGuidelines}
 ${common}`;
   }
 
-  // Student role: suppress proactive whiteboard usage
-  return `- The whiteboard is primarily the teacher's space. Do NOT draw on it proactively.
-- Only use whiteboard actions when the teacher or user explicitly invites you to write on the board (e.g., "come solve this", "show your work on the whiteboard").
+  // Stakeholder role: suppress proactive whiteboard usage
+  return `- The whiteboard is primarily for the lead consultant's structured analysis. Do NOT draw on it proactively.
+- Only use whiteboard actions when the lead consultant or user explicitly invites you to write on the board.
 - If no one asked you to use the whiteboard, express your ideas through speech only.
 - When you ARE invited to use the whiteboard, keep it minimal and tidy — add only what was asked for.
 ${common}`;
@@ -491,7 +501,7 @@ interface VirtualWhiteboardElement {
  * Returns empty string when the ledger is empty (zero extra token overhead).
  */
 function buildVirtualWhiteboardContext(
-  storeState: StatelessChatRequest['storeState'],
+  _storeState: StatelessChatRequest['storeState'],
   ledger?: WhiteboardActionRecord[],
 ): string {
   if (!ledger || ledger.length === 0) return '';
