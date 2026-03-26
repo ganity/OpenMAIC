@@ -27,8 +27,26 @@ export default function ClassroomDetailPage() {
   const generationStartedRef = useRef(false);
 
   const { generateRemaining, retrySingleOutline, stop } = useSceneGenerator({
-    onComplete: () => {
+    onComplete: async () => {
       log.info('[Classroom] All scenes generated');
+      // 将生成结果持久化到服务端，使课件可通过 URL 跨设备访问
+      const { stage, scenes } = useStageStore.getState();
+      if (stage && scenes.length > 0) {
+        try {
+          const res = await fetch('/api/classroom', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ stage, scenes }),
+          });
+          if (res.ok) {
+            log.info('[Classroom] Persisted to server:', stage.id);
+          } else {
+            log.warn('[Classroom] Failed to persist to server:', res.status);
+          }
+        } catch (err) {
+          log.warn('[Classroom] Server persist error:', err);
+        }
+      }
     },
   });
 
@@ -155,6 +173,7 @@ export default function ClassroomDetailPage() {
           },
           agents: params.agents,
           userProfile: params.userProfile,
+          generationMetadata: params.generationMetadata,
         });
       });
     } else if (outlines.length > 0 && stage) {

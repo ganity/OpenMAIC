@@ -5,7 +5,12 @@ import { useStageStore } from '@/lib/store/stage';
 import { getCurrentModelConfig } from '@/lib/utils/model-config';
 import { useSettingsStore } from '@/lib/store/settings';
 import { db } from '@/lib/utils/database';
-import type { SceneOutline, PdfImage, ImageMapping } from '@/lib/types/generation';
+import type {
+  SceneOutline,
+  PdfImage,
+  ImageMapping,
+  GenerationMetadata,
+} from '@/lib/types/generation';
 import type { AgentInfo } from '@/lib/generation/generation-pipeline';
 import type { Scene } from '@/lib/types/stage';
 import type { Action, SpeechAction } from '@/lib/types/action';
@@ -20,6 +25,7 @@ interface SceneContentResult {
   success: boolean;
   content?: unknown;
   effectiveOutline?: SceneOutline;
+  metadata?: GenerationMetadata;
   error?: string;
 }
 
@@ -74,6 +80,7 @@ async function fetchSceneContent(
       style?: string;
     };
     agents?: AgentInfo[];
+    metadata?: GenerationMetadata;
   },
   signal?: AbortSignal,
 ): Promise<SceneContentResult> {
@@ -102,6 +109,7 @@ async function fetchSceneActions(
     agents?: AgentInfo[];
     previousSpeeches?: string[];
     userProfile?: string;
+    metadata?: GenerationMetadata;
   },
   signal?: AbortSignal,
 ): Promise<SceneActionsResult> {
@@ -213,7 +221,7 @@ export interface UseSceneGeneratorOptions {
   onSceneGenerated?: (scene: Scene, index: number) => void;
   onSceneFailed?: (outline: SceneOutline, error: string) => void;
   onPhaseChange?: (phase: 'content' | 'actions', outline: SceneOutline) => void;
-  onComplete?: () => void;
+  onComplete?: () => void | Promise<void>;
 }
 
 export interface GenerationParams {
@@ -227,6 +235,7 @@ export interface GenerationParams {
   };
   agents?: AgentInfo[];
   userProfile?: string;
+  generationMetadata?: GenerationMetadata;
 }
 
 export function useSceneGenerator(options: UseSceneGeneratorOptions = {}) {
@@ -320,6 +329,7 @@ export function useSceneGenerator(options: UseSceneGeneratorOptions = {}) {
               imageMapping: params.imageMapping,
               stageInfo: params.stageInfo,
               agents: params.agents,
+              metadata: params.generationMetadata,
             },
             signal,
           );
@@ -353,6 +363,7 @@ export function useSceneGenerator(options: UseSceneGeneratorOptions = {}) {
               agents: params.agents,
               previousSpeeches,
               userProfile: params.userProfile,
+              metadata: params.generationMetadata,
             },
             signal,
           );
@@ -469,6 +480,7 @@ export function useSceneGenerator(options: UseSceneGeneratorOptions = {}) {
             imageMapping: params.imageMapping,
             stageInfo: params.stageInfo,
             agents: params.agents,
+            metadata: params.generationMetadata,
           },
           signal,
         );
@@ -496,6 +508,7 @@ export function useSceneGenerator(options: UseSceneGeneratorOptions = {}) {
             agents: params.agents,
             previousSpeeches,
             userProfile: params.userProfile,
+            metadata: params.generationMetadata,
           },
           signal,
         );
