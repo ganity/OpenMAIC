@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useRef, useMemo } from 'react';
-import { Bot, Check, ChevronLeft, Globe, Paperclip, FileText, X, Globe2 } from 'lucide-react';
+import { Bot, Check, ChevronLeft, ClipboardCheck, Globe, Paperclip, FileText, X, Globe2 } from 'lucide-react';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import {
   Select,
@@ -32,6 +32,8 @@ export interface GenerationToolbarProps {
   onLanguageChange: (lang: 'zh-CN' | 'en-US') => void;
   webSearch: boolean;
   onWebSearchChange: (v: boolean) => void;
+  includeQuiz: boolean;
+  onIncludeQuizChange: (v: boolean) => void;
   onSettingsOpen: (section?: SettingsSection) => void;
   // PDF
   pdfFile: File | null;
@@ -45,6 +47,8 @@ export function GenerationToolbar({
   onLanguageChange,
   webSearch,
   onWebSearchChange,
+  includeQuiz,
+  onIncludeQuizChange,
   onSettingsOpen,
   pdfFile,
   onPdfFileChange,
@@ -356,6 +360,20 @@ export function GenerationToolbar({
           <TooltipContent>{t('toolbar.webSearchNoProvider')}</TooltipContent>
         </Tooltip>
       )}
+
+      {/* ── Quiz toggle pill ── */}
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <button
+            onClick={() => onIncludeQuizChange(!includeQuiz)}
+            className={includeQuiz ? pillActive : pillMuted}
+          >
+            <ClipboardCheck className="size-3.5" />
+            {includeQuiz && <span>{t('toolbar.includeQuizOn')}</span>}
+          </button>
+        </TooltipTrigger>
+        <TooltipContent>{t('toolbar.includeQuizHint')}</TooltipContent>
+      </Tooltip>
 
       {/* ── Language pill ── */}
       <Tooltip>

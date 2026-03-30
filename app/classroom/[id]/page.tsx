@@ -3,6 +3,7 @@
 import { Stage } from '@/components/stage';
 import { ThemeProvider } from '@/lib/hooks/use-theme';
 import { useStageStore } from '@/lib/store';
+import { useSettingsStore } from '@/lib/store/settings';
 import { loadImageMapping } from '@/lib/utils/image-storage';
 import { useEffect, useRef, useState, useCallback } from 'react';
 import { useParams } from 'next/navigation';
@@ -26,6 +27,7 @@ export default function ClassroomDetailPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
+  const generationMode = useSettingsStore((s) => s.generationMode);
   const generationStartedRef = useRef(false);
   const pendingJobPollUrlRef = useRef<string | null>(null);
 
@@ -226,7 +228,13 @@ export default function ClassroomDetailPage() {
     if (pendingPollUrl) {
       sessionStorage.removeItem(`pendingJob_${classroomId}`);
     }
-    pendingJobPollUrlRef.current = null;
+    // 有 pending job 时立刻设置 ref，不等待异步 loadClassroom 内部设置
+    // 这样即使 React Strict Mode 第二次执行时 sessionStorage key 已被删除，防护也不会失效
+    if (pendingPollUrl) {
+      pendingJobPollUrlRef.current = pendingPollUrl;
+    } else {
+      pendingJobPollUrlRef.current = null;
+    }
     loadClassroom(pendingPollUrl).then(() => {
       const pollUrl = pendingPollUrl;
       log.info('[Classroom] loadClassroom done, pendingJobPollUrl:', pollUrl);
@@ -246,6 +254,7 @@ export default function ClassroomDetailPage() {
             const data = await resp.json();
             const job = data.data || data;
 
+            if (cancelled) break;
             // 用 job.outlines 设置 generatingOutlines，让 Stage 显示骨架屏
             if (job.outlines?.length > 0) {
               const currentStore = useStageStore.getState();
@@ -257,6 +266,7 @@ export default function ClassroomDetailPage() {
             }
 
             // 从服务端 classroom API 拉取最新 scenes
+            if (cancelled) break;
             const classRes = await fetch(`/api/classroom?id=${encodeURIComponent(classroomId)}`);
             if (classRes.ok) {
               const classJson = await classRes.json();
@@ -307,6 +317,10 @@ export default function ClassroomDetailPage() {
   // Auto-resume generation for pending outlines
   useEffect(() => {
     if (loading || error || generationStartedRef.current) return;
+    // 服务端模式下不走前端生成路径，由 server job 负责所有场景生成
+    if (generationMode === 'server') return;
+    // 服务端 Job 正在轮询中，等待 Job 自己更新 scenes，不走前端生成路径
+    if (pendingJobPollUrlRef.current) return;
 
     const state = useStageStore.getState();
     const { outlines, scenes, stage } = state;
@@ -351,7 +365,7 @@ export default function ClassroomDetailPage() {
         log.warn('[Classroom] Media generation resume error:', err);
       });
     }
-  }, [loading, error, generateRemaining]);
+  }, [loading, error, generateRemaining, generationMode]);
 
   return (
     <ThemeProvider>

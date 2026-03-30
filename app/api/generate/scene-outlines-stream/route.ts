@@ -211,6 +211,14 @@ export async function POST(req: NextRequest) {
       });
     }
 
+    // 用户显式设置优先于推断值；未设置时使用推断的 strategy.assessmentNeeded
+    const effectiveAssessmentNeeded =
+      requirements.assessmentNeeded != null ? requirements.assessmentNeeded : (strategy.assessmentNeeded ?? true);
+    const quizPolicy =
+      effectiveAssessmentNeeded === false
+        ? '**IMPORTANT: Do NOT include any quiz scenes (type: "quiz") in the outlines. The user has disabled quiz generation. Only use slide and interactive scene types.**'
+        : '';
+
     const trainingStrategy = formatTrainingStrategyForPrompt(strategy);
     const templateFamilyPrompt = formatTemplateFamilyPrompt(strategy);
     const reviewPolicyPrompt = formatReviewPolicyPrompt(strategy);
@@ -226,6 +234,11 @@ export async function POST(req: NextRequest) {
       clarificationQuestions: strategy.clarificationQuestions || [],
     };
 
+    const userProfile =
+      requirements.userNickname || requirements.userBio
+        ? `## Student Profile\n\nStudent: ${requirements.userNickname || 'Unknown'}${requirements.userBio ? ` — ${requirements.userBio}` : ''}\n\nConsider this student's background when designing the course. Adapt difficulty, examples, and teaching approach accordingly.\n\n---`
+        : '';
+
     const prompts = buildPrompt(PROMPT_IDS.REQUIREMENTS_TO_OUTLINES, {
       requirement: requirements.requirement,
       language: requirements.language,
@@ -235,8 +248,10 @@ export async function POST(req: NextRequest) {
           ? '无'
           : 'None',
       availableImages: availableImagesText,
+      userProfile,
       researchContext: researchContext || (requirements.language === 'zh-CN' ? '无' : 'None'),
       mediaGenerationPolicy,
+      quizPolicy,
       teacherContext,
       trainingStrategy,
       templateFamilyPrompt,

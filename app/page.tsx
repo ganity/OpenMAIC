@@ -50,6 +50,7 @@ import { SpeechButton } from '@/components/audio/speech-button';
 const log = createLogger('Home');
 
 const WEB_SEARCH_STORAGE_KEY = 'webSearchEnabled';
+const INCLUDE_QUIZ_STORAGE_KEY = 'includeQuizEnabled';
 const LANGUAGE_STORAGE_KEY = 'generationLanguage';
 const RECENT_OPEN_STORAGE_KEY = 'recentClassroomsOpen';
 
@@ -58,6 +59,7 @@ interface FormState {
   requirement: string;
   language: 'zh-CN' | 'en-US';
   webSearch: boolean;
+  includeQuiz: boolean;
 }
 
 const initialFormState: FormState = {
@@ -65,6 +67,7 @@ const initialFormState: FormState = {
   requirement: '',
   language: 'zh-CN',
   webSearch: false,
+  includeQuiz: true,
 };
 
 function HomePage() {
@@ -83,6 +86,7 @@ function HomePage() {
 
   // Model setup state
   const currentModelId = useSettingsStore((s) => s.modelId);
+  const generationMode = useSettingsStore((s) => s.generationMode);
   const [recentOpen, setRecentOpen] = useState(true);
 
   // Hydrate client-only state after mount (avoids SSR mismatch)
@@ -99,6 +103,8 @@ function HomePage() {
       const savedLanguage = localStorage.getItem(LANGUAGE_STORAGE_KEY);
       const updates: Partial<FormState> = {};
       if (savedWebSearch === 'true') updates.webSearch = true;
+      const savedIncludeQuiz = localStorage.getItem(INCLUDE_QUIZ_STORAGE_KEY);
+      if (savedIncludeQuiz === 'false') updates.includeQuiz = false;
       if (savedLanguage === 'zh-CN' || savedLanguage === 'en-US') {
         updates.language = savedLanguage;
       } else {
@@ -190,6 +196,7 @@ function HomePage() {
     setForm((prev) => ({ ...prev, [field]: value }));
     try {
       if (field === 'webSearch') localStorage.setItem(WEB_SEARCH_STORAGE_KEY, String(value));
+      if (field === 'includeQuiz') localStorage.setItem(INCLUDE_QUIZ_STORAGE_KEY, String(value));
       if (field === 'language') localStorage.setItem(LANGUAGE_STORAGE_KEY, String(value));
       if (field === 'requirement') updateRequirementCache(value as string);
     } catch {
@@ -229,7 +236,8 @@ function HomePage() {
 
   const handleGenerate = async () => {
     // Validate setup before proceeding
-    if (!currentModelId) {
+    // 服务端模式下由服务端负责模型配置，无需客户端选择模型
+    if (generationMode !== 'server' && !currentModelId) {
       showSetupToast(
         <BotOff className="size-4.5 text-amber-600 dark:text-amber-400" />,
         t('settings.modelNotConfigured'),
@@ -254,6 +262,7 @@ function HomePage() {
         userNickname: userProfile.nickname || undefined,
         userBio: userProfile.bio || undefined,
         webSearch: form.webSearch || undefined,
+        assessmentNeeded: form.includeQuiz,
       };
 
       let pdfStorageKey: string | undefined;
@@ -535,6 +544,8 @@ function HomePage() {
                   onLanguageChange={(lang) => updateForm('language', lang)}
                   webSearch={form.webSearch}
                   onWebSearchChange={(v) => updateForm('webSearch', v)}
+                  includeQuiz={form.includeQuiz}
+                  onIncludeQuizChange={(v) => updateForm('includeQuiz', v)}
                   onSettingsOpen={(section) => {
                     setSettingsSection(section);
                     setSettingsOpen(true);

@@ -660,6 +660,12 @@ function GenerationPreviewContent() {
           enableVideoGeneration: settings.videoGenerationEnabled ?? false,
           enableTTS: settings.ttsEnabled ?? false,
           agentMode: settings.agentMode === 'auto' ? 'generate' : 'default',
+          ...(currentSession.requirements.assessmentNeeded != null
+            ? { assessmentNeeded: currentSession.requirements.assessmentNeeded }
+            : {}),
+          ...(currentSession.requirements.trainingStrategy
+            ? { trainingStrategy: currentSession.requirements.trainingStrategy }
+            : {}),
         }),
         signal,
       });
@@ -1091,6 +1097,7 @@ function GenerationPreviewContent() {
         return;
       }
       sessionStorage.removeItem('generationSession');
+      hasStartedRef.current = false;
       setError(err instanceof Error ? err.message : String(err));
     }
   };

@@ -105,6 +105,16 @@ export async function generateSceneOutlinesFromRequirements(
     log.info(
       `[模板选择] family=${strategy.templateFamily} sourceMode=${strategy.sourceMode} riskLevel=${strategy.riskLevel} confidence=${strategy.confidence.overall} source=${requirements.trainingStrategy ? 'user_preset' : 'inferred'}`,
     );
+    // 用户显式设置优先于推断值；未设置时使用推断的 strategy.assessmentNeeded
+    const effectiveAssessmentNeeded =
+      requirements.assessmentNeeded != null
+        ? requirements.assessmentNeeded
+        : (strategy.assessmentNeeded ?? true);
+    const quizPolicy =
+      effectiveAssessmentNeeded === false
+        ? '**IMPORTANT: Do NOT include any quiz scenes (type: "quiz") in the outlines. The user has disabled quiz generation. Only use slide and interactive scene types.**'
+        : '';
+
     const trainingStrategy = formatTrainingStrategyForPrompt(strategy);
     const templateFamilyPrompt = formatTemplateFamilyPrompt(strategy);
     const reviewPolicyPrompt = formatReviewPolicyPrompt(strategy);
@@ -132,6 +142,7 @@ export async function generateSceneOutlinesFromRequirements(
     availableImages: availableImagesText,
     userProfile: userProfileText,
     mediaGenerationPolicy,
+    quizPolicy,
     researchContext:
       options?.researchContext || (requirements.language === 'zh-CN' ? '无' : 'None'),
     // Server-side generation populates this via options; client-side populates via formatTeacherPersonaForPrompt
