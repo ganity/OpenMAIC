@@ -88,6 +88,7 @@ function getTTSProviderName(providerId: TTSProviderId, t: (key: string) => strin
     'azure-tts': t('settings.providerAzureTTS'),
     'glm-tts': t('settings.providerGLMTTS'),
     'qwen-tts': t('settings.providerQwenTTS'),
+    'doubao-tts': t('settings.providerDoubaoTTS'),
     'elevenlabs-tts': t('settings.providerElevenLabsTTS'),
     'browser-native-tts': t('settings.providerBrowserNativeTTS'),
   };
@@ -132,6 +133,7 @@ export function MediaPopover({ onSettingsOpen }: MediaPopoverProps) {
   const setVideoModelId = useSettingsStore((s) => s.setVideoModelId);
 
   const ttsProviderId = useSettingsStore((s) => s.ttsProviderId);
+  const ttsModelId = useSettingsStore((s) => s.ttsModelId);
   const ttsVoice = useSettingsStore((s) => s.ttsVoice);
   const ttsSpeed = useSettingsStore((s) => s.ttsSpeed);
   const ttsProvidersConfig = useSettingsStore((s) => s.ttsProvidersConfig);
@@ -269,6 +271,7 @@ export function MediaPopover({ onSettingsOpen }: MediaPopoverProps) {
       await startPreview({
         text: t('settings.ttsTestTextDefault'),
         providerId: ttsProviderId,
+        modelId: ttsModelId,
         voice: ttsVoice,
         speed: ttsSpeed,
         apiKey: providerConfig?.apiKey,
@@ -284,6 +287,7 @@ export function MediaPopover({ onSettingsOpen }: MediaPopoverProps) {
     startPreview,
     stopPreview,
     t,
+    ttsModelId,
     ttsProviderId,
     ttsProvidersConfig,
     ttsSpeed,
