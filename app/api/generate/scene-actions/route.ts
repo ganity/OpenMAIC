@@ -15,7 +15,7 @@ import {
   type SceneGenerationContext,
   type AgentInfo,
 } from '@/lib/generation/generation-pipeline';
-import type { SceneOutline } from '@/lib/types/generation';
+import type { SceneOutline, GenerationMetadata } from '@/lib/types/generation';
 import type {
   GeneratedSlideContent,
   GeneratedQuizContent,
@@ -42,6 +42,7 @@ export async function POST(req: NextRequest) {
       agents,
       previousSpeeches: incomingPreviousSpeeches,
       userProfile,
+      metadata,
     } = body as {
       outline: SceneOutline;
       allOutlines: SceneOutline[];
@@ -54,6 +55,7 @@ export async function POST(req: NextRequest) {
       agents?: AgentInfo[];
       previousSpeeches?: string[];
       userProfile?: string;
+      metadata?: GenerationMetadata;
     };
 
     // Validate required fields
@@ -128,7 +130,15 @@ export async function POST(req: NextRequest) {
     // ── Generate actions ──
     log.info(`Generating actions: "${outline.title}" (${outline.type}) [model=${modelString}]`);
 
-    const actions = await generateSceneActions(outline, content, aiCall, ctx, agents, userProfile);
+    const actions = await generateSceneActions(
+      outline,
+      content,
+      aiCall,
+      ctx,
+      agents,
+      userProfile,
+      metadata,
+    );
 
     log.info(`Generated ${actions.length} actions for: "${outline.title}"`);
 

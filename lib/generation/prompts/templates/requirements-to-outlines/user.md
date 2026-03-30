@@ -34,6 +34,12 @@ Please generate scene outlines based on the following course requirements.
 
 {{teacherContext}}
 
+### Training Strategy
+
+{{trainingStrategy}}
+
+{{snippet:template-guardrails}}
+
 ---
 
 ## Output Requirements

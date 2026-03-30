@@ -3,6 +3,7 @@
 CLAUDE.local.md
 .claude
 .superpowers
+.augment
 
 # dependencies
 /node_modules
@@ -71,3 +72,5 @@ next-env.d.ts
 
 # docs
 /docs
+
+android-play/

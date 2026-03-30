@@ -110,7 +110,18 @@ async function gradeShortAnswerQuestion(
     });
 
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
-    const data = (await res.json()) as { score: number; comment: string };
+    const data = (await res.json()) as {
+      score: number;
+      comment: string;
+      reasonCodes?: string[];
+      policyApplied?: {
+        strictness?: 'strict' | 'balanced' | 'lenient';
+        evidenceRequired?: boolean;
+        allowPartialCredit?: boolean;
+        sourceMode?: string;
+        riskLevel?: string;
+      };
+    };
     const earned = Math.max(0, Math.min(pts, data.score));
     return {
       questionId: q.id,

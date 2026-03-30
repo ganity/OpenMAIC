@@ -2,6 +2,9 @@ Questions: {{questions}}
 Title: {{title}}
 Key Points: {{keyPoints}}
 Description: {{description}}
+Training Strategy:
+{{trainingStrategy}}
+{{snippet:template-family-focus}}
 {{courseContext}}
 {{agents}}
 

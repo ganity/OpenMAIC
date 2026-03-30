@@ -54,7 +54,12 @@ export function buildDirectorPrompt(
   conversationSummary: string,
   agentResponses: AgentTurnSummary[],
   turnCount: number,
-  discussionContext?: { topic: string; prompt?: string } | null,
+  discussionContext?: {
+    topic: string;
+    prompt?: string;
+    templateFamilyPrompt?: string;
+    reviewPolicyPrompt?: string;
+  } | null,
   triggerAgentId?: string | null,
   whiteboardLedger?: WhiteboardActionRecord[],
   userProfile?: { nickname?: string; bio?: string },
@@ -79,7 +84,7 @@ export function buildDirectorPrompt(
 
   const discussionSection = isDiscussion
     ? `\n# Discussion Mode
-Topic: "${discussionContext!.topic}"${discussionContext!.prompt ? `\nPrompt: "${discussionContext!.prompt}"` : ''}${triggerAgentId ? `\nInitiator: "${triggerAgentId}"` : ''}
+Topic: "${discussionContext!.topic}"${discussionContext!.prompt ? `\nPrompt: "${discussionContext!.prompt}"` : ''}${triggerAgentId ? `\nInitiator: "${triggerAgentId}"` : ''}${discussionContext!.templateFamilyPrompt ? `\n\n${discussionContext!.templateFamilyPrompt}` : ''}${discussionContext!.reviewPolicyPrompt ? `\n\n${discussionContext!.reviewPolicyPrompt}` : ''}
 This is a multi-agent company training course positioning discussion, not a classroom Q&A session.\n`
     : '';
 

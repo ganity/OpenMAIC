@@ -3,10 +3,17 @@
 import { useEffect, useState, Suspense, useRef } from 'react';
 import { useRouter } from 'next/navigation';
 import { motion, AnimatePresence } from 'motion/react';
-import { CheckCircle2, Sparkles, AlertCircle, AlertTriangle, ArrowLeft, Bot } from 'lucide-react';
+import { CheckCircle2, Sparkles, AlertCircle, AlertTriangle, ArrowLeft, Bot, Wand2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select';
 import { cn } from '@/lib/utils';
 import { useStageStore } from '@/lib/store/stage';
 import { useSettingsStore } from '@/lib/store/settings';
@@ -24,7 +31,11 @@ import { db } from '@/lib/utils/database';
 import { MAX_PDF_CONTENT_CHARS, MAX_VISION_IMAGES } from '@/lib/constants/generation';
 import { nanoid } from 'nanoid';
 import type { Stage } from '@/lib/types/stage';
-import type { SceneOutline, PdfImage, ImageMapping } from '@/lib/types/generation';
+import {
+  applyTemplateSelectionOverrides,
+  type TemplateFamily,
+} from '@/lib/generation/training-strategy';
+import type { SceneOutline, PdfImage, ImageMapping, GenerationMetadata } from '@/lib/types/generation';
 import { AgentRevealModal } from '@/components/agent/agent-reveal-modal';
 import { createLogger } from '@/lib/logger';
 import { type GenerationSessionState, ALL_STEPS, getActiveSteps } from './types';
@@ -37,6 +48,7 @@ function GenerationPreviewContent() {
   const { t } = useI18n();
   const hasStartedRef = useRef(false);
   const abortControllerRef = useRef<AbortController | null>(null);
+  const streamedOutlineCountRef = useRef(0);
 
   const [session, setSession] = useState<GenerationSessionState | null>(null);
   const [sessionLoaded, setSessionLoaded] = useState(false);
@@ -49,6 +61,9 @@ function GenerationPreviewContent() {
   const [webSearchSources, setWebSearchSources] = useState<Array<{ title: string; url: string }>>(
     [],
   );
+  const [clarificationQuestions, setClarificationQuestions] = useState<string[]>([]);
+  const [clarificationAnswer, setClarificationAnswer] = useState('');
+  const [isAwaitingClarification, setIsAwaitingClarification] = useState(false);
   const [showAgentReveal, setShowAgentReveal] = useState(false);
   const [generatedAgents, setGeneratedAgents] = useState<
     Array<{
@@ -61,7 +76,91 @@ function GenerationPreviewContent() {
       priority: number;
     }>
   >([]);
+  const [selectorChoice, setSelectorChoice] = useState('');
+  const [hasAppliedSelector, setHasAppliedSelector] = useState(false);
   const agentRevealResolveRef = useRef<(() => void) | null>(null);
+
+  const templateFamilyLabels: Record<string, string> = {
+    onboarding: '入职 / 融入',
+    policy: '制度 / 合规',
+    process: '流程 / SOP',
+    system: '系统操作',
+    skill: '技能训练',
+    product: '产品 / 服务知识',
+    safety: '安全 / 应急',
+    general: '通用培训',
+  };
+
+  const recommendedStrategy = session?.generationMetadata?.trainingStrategy;
+  const shouldShowLightweightSelector =
+    isAwaitingClarification &&
+    Boolean(
+      recommendedStrategy &&
+        (recommendedStrategy.confidence.overall === 'medium' || recommendedStrategy.confidence.overall === 'low'),
+    );
+
+  const rerunGenerationWithClarification = () => {
+    hasStartedRef.current = true;
+    void startGeneration();
+  };
+
+  const applyTemplateSelectorChoice = () => {
+    if (!session || !recommendedStrategy || !selectorChoice) return;
+
+    const nextStrategy = applyTemplateSelectionOverrides(recommendedStrategy, {
+      trainingType: selectorChoice as TemplateFamily,
+      templateFamily: selectorChoice as TemplateFamily,
+    });
+
+    const updatedSession: GenerationSessionState = {
+      ...session,
+      requirements: {
+        ...session.requirements,
+        trainingType: nextStrategy.trainingType,
+        templateFamily: nextStrategy.templateFamily,
+        sourceMode: nextStrategy.sourceMode,
+        riskLevel: nextStrategy.riskLevel,
+        assessmentNeeded: nextStrategy.assessmentNeeded,
+        deliveryMode: nextStrategy.deliveryMode,
+        trainingStrategy: nextStrategy,
+      },
+      generationMetadata: {
+        ...session.generationMetadata,
+        trainingStrategy: nextStrategy,
+        trainingType: nextStrategy.trainingType,
+        templateFamily: nextStrategy.templateFamily,
+        sourceMode: nextStrategy.sourceMode,
+        riskLevel: nextStrategy.riskLevel,
+        assessmentNeeded: nextStrategy.assessmentNeeded,
+        confidenceOverall: nextStrategy.confidence.overall,
+        selectionReason: nextStrategy.selectionReason,
+        clarificationQuestions: [],
+      },
+    };
+
+    setSession(updatedSession);
+    sessionStorage.setItem('generationSession', JSON.stringify(updatedSession));
+    setClarificationQuestions([]);
+    setClarificationAnswer('');
+    setIsAwaitingClarification(false);
+    setError(null);
+    setHasAppliedSelector(true);
+    setStatusMessage('已采用你选择的模板方向，正在继续生成...');
+    void fetch('/api/telemetry', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        eventType: 'template_selector_manual_override',
+        payload: {
+          sessionId: updatedSession.sessionId,
+          selectedTemplateFamily: selectorChoice,
+          recommendedTemplateFamily: recommendedStrategy.templateFamily,
+          confidence: recommendedStrategy.confidence.overall,
+        },
+      }),
+    }).catch(() => undefined);
+    rerunGenerationWithClarification();
+  };
 
   // Compute active steps based on session state
   const activeSteps = getActiveSteps(session);
@@ -120,12 +219,34 @@ function GenerationPreviewContent() {
 
   // Auto-start generation when session is loaded
   useEffect(() => {
-    if (session && !hasStartedRef.current) {
+    if (session && !hasStartedRef.current && !isAwaitingClarification) {
       hasStartedRef.current = true;
       startGeneration();
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [session]);
+  }, [session, isAwaitingClarification]);
+
+  const submitClarificationAnswers = () => {
+    if (!session || !clarificationAnswer.trim()) return;
+
+    const nextRequirement = `${session.requirements.requirement.trim()}\n\n补充说明：\n${clarificationAnswer.trim()}`;
+    const updatedSession: GenerationSessionState = {
+      ...session,
+      requirements: {
+        ...session.requirements,
+        requirement: nextRequirement,
+      },
+    };
+
+    setSession(updatedSession);
+    sessionStorage.setItem('generationSession', JSON.stringify(updatedSession));
+    setClarificationQuestions([]);
+    setClarificationAnswer('');
+    setIsAwaitingClarification(false);
+    setError(null);
+    setStatusMessage('正在根据补充说明重新生成大纲...');
+    rerunGenerationWithClarification();
+  };
 
   // Main generation flow
   const startGeneration = async () => {
@@ -142,6 +263,7 @@ function GenerationPreviewContent() {
 
     setError(null);
     setCurrentStepIndex(0);
+    streamedOutlineCountRef.current = 0;
 
     try {
       // Compute active steps for this session (recomputed after session mutations)
@@ -519,8 +641,126 @@ function GenerationPreviewContent() {
         stage.agentIds = presetAgentIds;
       }
 
-      // ── Generate outlines (with agent personas for teacher context) ──
-      let outlines = currentSession.sceneOutlines;
+      // ── 按 generationMode 分流 ──
+      if (settings.generationMode !== 'stream') {
+
+      // ── 提交服务端 Job，完成大纲+场景+TTS生成 ──
+      setStatusMessage('正在提交生成任务...');
+
+      const headers = getApiHeaders();
+      const jobResp = await fetch('/api/generate-classroom', {
+        method: 'POST',
+        headers: { ...headers, 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          requirement: currentSession.requirements.requirement,
+          language: currentSession.requirements.language,
+          ...(currentSession.pdfText ? { pdfContent: { text: currentSession.pdfText, images: (currentSession.pdfImages || []).map((img) => img.src || '') } } : {}),
+          enableWebSearch: currentSession.requirements.webSearch ?? false,
+          enableImageGeneration: settings.imageGenerationEnabled ?? false,
+          enableVideoGeneration: settings.videoGenerationEnabled ?? false,
+          enableTTS: settings.ttsEnabled ?? false,
+          agentMode: settings.agentMode === 'auto' ? 'generate' : 'default',
+        }),
+        signal,
+      });
+
+      if (!jobResp.ok) {
+        const errData = await jobResp.json().catch(() => ({}));
+        throw new Error(errData.message || '提交生成任务失败');
+      }
+
+      const jobData = await jobResp.json();
+      const { pollUrl } = jobData.data || jobData;
+
+      // 轮询 Job 进度
+      setStatusMessage('服务端生成中，关闭页面后仍会继续...');
+      let classroomUrl: string | null = null;
+
+      while (true) {
+        if (signal.aborted) throw new DOMException('AbortError', 'AbortError');
+        await new Promise((res) => setTimeout(res, 1500));
+        if (signal.aborted) throw new DOMException('AbortError', 'AbortError');
+
+        const pollResp = await fetch(pollUrl, { signal });
+        if (!pollResp.ok) continue;
+        const pollData = await pollResp.json();
+        const jobStatus = pollData.data || pollData;
+
+        // 更新进度提示
+        if (jobStatus.step) {
+          const stepMessages: Record<string, string> = {
+            initializing: '初始化中...',
+            researching: '网络检索中...',
+            generating_outlines: '生成大纲中...',
+            generating_scenes: `生成场景中 (${jobStatus.scenesGenerated || 0}/${jobStatus.totalScenes || '?'})...`,
+            generating_media: '生成媒体资源中...',
+            generating_tts: '生成语音中...',
+            persisting: '保存中...',
+            completed: '生成完成！',
+          };
+          setStatusMessage(stepMessages[jobStatus.step] || jobStatus.step);
+
+          // 根据服务端 step 推进前端步骤动画
+          const stepToActiveIdx: Record<string, string> = {
+            generating_outlines: 'outline',
+            generating_scenes: 'slide-content',
+            generating_media: 'actions',
+            generating_tts: 'actions',
+            persisting: 'actions',
+          };
+          const targetStepId = stepToActiveIdx[jobStatus.step];
+          if (targetStepId) {
+            const idx = activeSteps.findIndex((s) => s.id === targetStepId);
+            if (idx >= 0) setCurrentStepIndex(idx);
+          }
+
+          // 大纲生成完成后驱动 StreamingOutlineVisualizer（渐进式填充模拟流式效果）
+          if (jobStatus.outlines?.length > 0) {
+            const allOutlines: SceneOutline[] = jobStatus.outlines;
+            const alreadyStreamed = streamedOutlineCountRef.current;
+            if (alreadyStreamed < allOutlines.length) {
+              // 逐步添加新的 outline，每个间隔 200ms
+              for (let i = alreadyStreamed; i < allOutlines.length; i++) {
+                const idx = i;
+                setTimeout(() => {
+                  setStreamingOutlines(allOutlines.slice(0, idx + 1));
+                }, (idx - alreadyStreamed) * 200);
+              }
+              streamedOutlineCountRef.current = allOutlines.length;
+            }
+          }
+
+          // 第一个场景生成完成后立即跳转，保存 pollUrl 供 classroom 页面继续等待
+          if (jobStatus.step === 'generating_scenes' && (jobStatus.scenesGenerated || 0) >= 1 && jobStatus.classroomId) {
+            sessionStorage.setItem(`pendingJob_${jobStatus.classroomId}`, jobStatus.pollUrl || pollUrl);
+            classroomUrl = `/classroom/${jobStatus.classroomId}`;
+            break;
+          }
+        }
+
+        if (jobStatus.done || jobStatus.status === 'succeeded') {
+          classroomUrl = jobStatus.result?.url || null;
+          break;
+        }
+        if (jobStatus.status === 'failed') {
+          throw new Error(jobStatus.error || '服务端生成失败');
+        }
+      }
+
+      // 清理 session 并跳转
+      sessionStorage.removeItem('generationSession');
+      if (classroomUrl) {
+        // 提取 classroomId 并跳转
+        const urlParts = classroomUrl.split('/');
+        const classroomId = urlParts[urlParts.length - 1];
+        router.push(`/classroom/${classroomId}`);
+      } else {
+        router.push('/');
+      }
+
+      } else {
+      let outlines = currentSession.sceneOutlines as SceneOutline[];
+      let outlineMetadata = currentSession.generationMetadata;
 
       const outlineStepIdx = activeSteps.findIndex((s) => s.id === 'outline');
       setCurrentStepIndex(outlineStepIdx >= 0 ? outlineStepIdx : 0);
@@ -528,7 +768,10 @@ function GenerationPreviewContent() {
         log.debug('=== Generating outlines (SSE) ===');
         setStreamingOutlines([]);
 
-        outlines = await new Promise<SceneOutline[]>((resolve, reject) => {
+        const outlineResponse = await new Promise<{
+          outlines: SceneOutline[];
+          metadata?: GenerationMetadata;
+        }>((resolve, reject) => {
           const collected: SceneOutline[] = [];
 
           fetch('/api/generate/scene-outlines-stream', {
@@ -559,6 +802,7 @@ function GenerationPreviewContent() {
 
               const decoder = new TextDecoder();
               let sseBuffer = '';
+              let streamMetadata: GenerationMetadata | undefined;
 
               const pump = (): Promise<void> =>
                 reader.read().then(({ done, value }) => {
@@ -578,8 +822,32 @@ function GenerationPreviewContent() {
                           collected.length = 0;
                           setStreamingOutlines([]);
                           setStatusMessage(t('generation.outlineRetrying'));
+                        } else if (evt.type === 'clarification_needed') {
+                          streamMetadata = evt.metadata;
+                          const updatedSession = {
+                            ...currentSession,
+                            generationMetadata: evt.metadata,
+                          };
+                          currentSession = updatedSession;
+                          setSession(updatedSession);
+                          sessionStorage.setItem('generationSession', JSON.stringify(updatedSession));
+                          setClarificationQuestions(evt.metadata?.clarificationQuestions || []);
+                          setClarificationAnswer('');
+                          setIsAwaitingClarification(true);
+                          setStatusMessage('请先补充关键信息，我们再继续生成。');
+                          reject(
+                            new Error(
+                              evt.metadata?.clarificationQuestions?.join('\n') ||
+                                t('generation.outlineGenerateFailed'),
+                            ),
+                          );
+                          return;
                         } else if (evt.type === 'done') {
-                          resolve(evt.outlines || collected);
+                          streamMetadata = evt.metadata;
+                          setClarificationQuestions([]);
+                          setClarificationAnswer('');
+                          setIsAwaitingClarification(false);
+                          resolve({ outlines: evt.outlines || collected, metadata: streamMetadata });
                           return;
                         } else if (evt.type === 'error') {
                           reject(new Error(evt.error));
@@ -592,7 +860,7 @@ function GenerationPreviewContent() {
                   }
                   if (done) {
                     if (collected.length > 0) {
-                      resolve(collected);
+                      resolve({ outlines: collected, metadata: streamMetadata });
                     } else {
                       reject(new Error(t('generation.outlineEmptyResponse')));
                     }
@@ -605,8 +873,14 @@ function GenerationPreviewContent() {
             })
             .catch(reject);
         });
+        outlines = outlineResponse.outlines;
+        outlineMetadata = outlineResponse.metadata;
 
-        const updatedSession = { ...currentSession, sceneOutlines: outlines };
+        const updatedSession = {
+          ...currentSession,
+          sceneOutlines: outlines,
+          generationMetadata: outlineMetadata,
+        };
         setSession(updatedSession);
         sessionStorage.setItem('generationSession', JSON.stringify(updatedSession));
 
@@ -666,6 +940,7 @@ function GenerationPreviewContent() {
           stageInfo,
           stageId: stage.id,
           agents,
+          metadata: outlineMetadata,
         }),
         signal,
       });
@@ -678,6 +953,9 @@ function GenerationPreviewContent() {
       const contentData = await contentResp.json();
       if (!contentData.success || !contentData.content) {
         throw new Error(contentData.error || t('generation.sceneGenerateFailed'));
+      }
+      if (contentData.metadata) {
+        outlineMetadata = contentData.metadata;
       }
 
       // Generate actions (activate actions step indicator)
@@ -695,6 +973,7 @@ function GenerationPreviewContent() {
           agents,
           previousSpeeches: [],
           userProfile,
+          metadata: outlineMetadata,
         }),
         signal,
       });
@@ -708,6 +987,8 @@ function GenerationPreviewContent() {
       if (!data.success || !data.scene) {
         throw new Error(data.error || t('generation.sceneGenerateFailed'));
       }
+
+      const firstScene = data.scene;
 
       // Generate TTS for first scene (part of actions step — blocking)
       if (settings.ttsEnabled && settings.ttsProviderId !== 'browser-native-tts') {
@@ -766,11 +1047,25 @@ function GenerationPreviewContent() {
       }
 
       // Add scene to store and navigate
-      store.addScene(data.scene);
-      store.setCurrentSceneId(data.scene.id);
+      store.addScene(firstScene);
+      store.setCurrentSceneId(firstScene.id);
+
+      try {
+        const persistResp = await fetch('/api/classroom', {
+          method: 'POST',
+          headers: getApiHeaders(),
+          body: JSON.stringify({ stage, scenes: [firstScene] }),
+          signal,
+        });
+        if (!persistResp.ok) {
+          log.warn('[GenerationPreview] Failed to persist classroom to server:', persistResp.status);
+        }
+      } catch (persistErr) {
+        log.warn('[GenerationPreview] Failed to persist classroom to server:', persistErr);
+      }
 
       // Set remaining outlines as skeleton placeholders
-      const remaining = outlines.filter((o) => o.order !== data.scene.order);
+      const remaining = outlines.filter((o) => o.order !== firstScene.order);
       store.setGeneratingOutlines(remaining);
 
       // Store generation params for classroom to continue generation
@@ -780,12 +1075,14 @@ function GenerationPreviewContent() {
           pdfImages: currentSession.pdfImages,
           agents,
           userProfile,
+          generationMetadata: outlineMetadata,
         }),
       );
 
       sessionStorage.removeItem('generationSession');
       await store.saveToStorage();
       router.push(`/classroom/${stage.id}`);
+      } // end if/else generationMode
     } catch (err) {
       // AbortError is expected when navigating away — don't show as error
       if (err instanceof DOMException && err.name === 'AbortError') {
@@ -943,28 +1240,103 @@ function GenerationPreviewContent() {
               <div className="space-y-3 max-w-sm mx-auto">
                 <AnimatePresence mode="wait">
                   <motion.div
-                    key={error ? 'error' : isComplete ? 'done' : activeStep.id}
+                    key={
+                      isAwaitingClarification
+                        ? 'clarification'
+                        : error
+                          ? 'error'
+                          : isComplete
+                            ? 'done'
+                            : activeStep.id
+                    }
                     initial={{ opacity: 0, y: 10 }}
                     animate={{ opacity: 1, y: 0 }}
                     exit={{ opacity: 0, y: -10 }}
                     className="space-y-2"
                   >
                     <h2 className="text-2xl font-bold tracking-tight">
-                      {error
-                        ? t('generation.generationFailed')
-                        : isComplete
-                          ? t('generation.generationComplete')
-                          : t(activeStep.title)}
+                      {isAwaitingClarification
+                        ? '还差一点关键信息'
+                        : error
+                          ? t('generation.generationFailed')
+                          : isComplete
+                            ? t('generation.generationComplete')
+                            : t(activeStep.title)}
                     </h2>
                     <p className="text-muted-foreground text-base">
-                      {error
-                        ? error
-                        : isComplete
-                          ? t('generation.classroomReady')
-                          : statusMessage || t(activeStep.description)}
+                      {isAwaitingClarification
+                        ? '请补充下面的信息后继续生成，我们会基于你的补充重新判断模板与资料模式。'
+                        : error
+                          ? error
+                          : isComplete
+                            ? t('generation.classroomReady')
+                            : statusMessage || t(activeStep.description)}
                     </p>
                   </motion.div>
                 </AnimatePresence>
+
+                {isAwaitingClarification && (
+                  <div className="mt-4 space-y-3 rounded-xl border border-amber-200/70 bg-amber-50/80 p-4 text-left dark:border-amber-800/60 dark:bg-amber-950/20">
+                    <div className="space-y-2">
+                      {clarificationQuestions.map((question, index) => (
+                        <p key={`${index + 1}-${question}`} className="text-sm text-amber-900 dark:text-amber-100">
+                          {index + 1}. {question}
+                        </p>
+                      ))}
+                    </div>
+
+                    {recommendedStrategy && (
+                      <div className="rounded-lg border border-amber-300/60 bg-white/80 p-3 dark:border-amber-700/60 dark:bg-slate-950/50">
+                        <div className="mb-2 flex items-center gap-2 text-sm font-medium text-amber-900 dark:text-amber-100">
+                          <Wand2 className="size-4" />
+                          模板识别建议
+                        </div>
+                        <div className="grid gap-2 text-xs text-amber-950 dark:text-amber-50 sm:grid-cols-2">
+                          <p>推荐模板：{templateFamilyLabels[recommendedStrategy.templateFamily] || recommendedStrategy.templateFamily}</p>
+                          <p>资料模式：{recommendedStrategy.sourceMode}</p>
+                          <p>风险等级：{recommendedStrategy.riskLevel}</p>
+                          <p>识别置信度：{recommendedStrategy.confidence.overall}</p>
+                        </div>
+                        {recommendedStrategy.selectionReason && (
+                          <p className="mt-2 text-xs leading-relaxed text-amber-800/90 dark:text-amber-200/90">
+                            判断依据：{recommendedStrategy.selectionReason}
+                          </p>
+                        )}
+                      </div>
+                    )}
+
+                    {shouldShowLightweightSelector && recommendedStrategy && (
+                      <div className="space-y-2 rounded-lg border border-sky-200/70 bg-sky-50/80 p-3 dark:border-sky-800/60 dark:bg-sky-950/20">
+                        <div className="flex items-center gap-2 text-sm font-medium text-sky-900 dark:text-sky-100">
+                          <Sparkles className="size-4" />
+                          如果推荐不准确，你也可以手动切换模板方向
+                        </div>
+                        <Select value={selectorChoice} onValueChange={setSelectorChoice}>
+                          <SelectTrigger className="w-full bg-white dark:bg-slate-950">
+                            <SelectValue placeholder="选择更符合需求的模板方向" />
+                          </SelectTrigger>
+                          <SelectContent>
+                            {Object.entries(templateFamilyLabels).map(([value, label]) => (
+                              <SelectItem key={value} value={value}>
+                                {label}
+                              </SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                        <p className="text-xs text-sky-800/90 dark:text-sky-200/90">
+                          适用于“推荐方向大致接近，但你知道更准确模板”的场景。系统会沿用当前资料约束与风险控制继续生成。
+                        </p>
+                      </div>
+                    )}
+
+                    <textarea
+                      value={clarificationAnswer}
+                      onChange={(e) => setClarificationAnswer(e.target.value)}
+                      placeholder="请补充企业背景、培训目标、资料情况、适用对象等信息"
+                      className="min-h-[120px] w-full rounded-lg border border-amber-200 bg-white/90 px-3 py-2 text-sm text-gray-900 outline-none transition focus:border-amber-400 focus:ring-2 focus:ring-amber-200 dark:border-amber-800 dark:bg-slate-900/80 dark:text-gray-100 dark:focus:border-amber-600 dark:focus:ring-amber-900/40"
+                    />
+                  </div>
+                )}
 
                 {/* Truncation warning indicator */}
                 <AnimatePresence>
@@ -1028,9 +1400,45 @@ function GenerationPreviewContent() {
         </motion.div>
 
         {/* Footer Action */}
-        <div className="h-16 flex items-center justify-center w-full">
+        <div className="min-h-16 flex items-center justify-center w-full">
           <AnimatePresence>
-            {error ? (
+            {isAwaitingClarification ? (
+              <motion.div
+                initial={{ opacity: 0, y: 10 }}
+                animate={{ opacity: 1, y: 0 }}
+                className="flex w-full max-w-xl flex-col gap-3"
+              >
+                {shouldShowLightweightSelector && selectorChoice ? (
+                  <Button size="lg" className="h-12 w-full" onClick={applyTemplateSelectorChoice}>
+                    <Wand2 className="mr-2 size-4" />
+                    使用所选模板继续生成
+                  </Button>
+                ) : null}
+                <div className="flex w-full flex-col gap-3 sm:flex-row">
+                  <Button
+                    size="lg"
+                    className="h-12 flex-1"
+                    onClick={submitClarificationAnswers}
+                    disabled={!clarificationAnswer.trim()}
+                  >
+                    继续生成
+                  </Button>
+                  <Button
+                    size="lg"
+                    variant="outline"
+                    className="h-12 sm:w-40"
+                    onClick={goBackToHome}
+                  >
+                    返回重填
+                  </Button>
+                </div>
+                {hasAppliedSelector ? (
+                  <p className="text-center text-xs text-muted-foreground">
+                    已记录本次手动切换，后续将继续沿用当前资料约束与风险控制。
+                  </p>
+                ) : null}
+              </motion.div>
+            ) : error ? (
               <motion.div
                 initial={{ opacity: 0, y: 10 }}
                 animate={{ opacity: 1, y: 0 }}

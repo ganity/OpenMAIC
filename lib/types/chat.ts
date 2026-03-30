@@ -199,7 +199,7 @@ export function toSessionListItem(session: ChatSession): SessionListItem {
  * Ordered to match the original action sequence in the scene.
  */
 export type LectureNoteItem =
-  | { kind: 'speech'; text: string }
+  | { kind: 'speech'; text: string; actionId: string }
   | { kind: 'action'; type: string; label?: string };
 
 /**

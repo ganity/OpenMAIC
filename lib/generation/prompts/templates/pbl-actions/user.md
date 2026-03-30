@@ -7,6 +7,9 @@
 **Description**: {{description}}
 {{courseContext}}
 {{agents}}
+{{trainingStrategy}}
+{{templateFamilyPrompt}}
+{{reviewPolicyPrompt}}
 
 Please generate the speech content for this PBL scene.
 

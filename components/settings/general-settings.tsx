@@ -4,6 +4,7 @@ import { useState, useCallback } from 'react';
 import { Label } from '@/components/ui/label';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
+import { useSettingsStore } from '@/lib/store/settings';
 import {
   AlertDialog,
   AlertDialogContent,
@@ -23,6 +24,7 @@ const log = createLogger('GeneralSettings');
 
 export function GeneralSettings() {
   const { t } = useI18n();
+  const { generationMode, setGenerationMode } = useSettingsStore();
 
   // Clear cache state
   const [showClearDialog, setShowClearDialog] = useState(false);
@@ -63,6 +65,40 @@ export function GeneralSettings() {
 
   return (
     <div className="flex flex-col gap-8">
+      {/* Generation Mode */}
+      <div className="rounded-xl border bg-card p-5 space-y-3">
+        <div>
+          <Label className="text-base font-medium">生成模式</Label>
+          <p className="text-sm text-muted-foreground mt-1">
+            流式模式会在生成前识别培训类型并发起补问确认，适合需要精确控制模板的场景；服务端模式直接后台生成，速度更快。
+          </p>
+        </div>
+        <div className="inline-flex rounded-lg border bg-muted/30 p-0.5">
+          <button
+            type="button"
+            onClick={() => setGenerationMode('server')}
+            className={`px-4 py-1.5 rounded-md text-sm font-medium transition-all ${
+              generationMode === 'server'
+                ? 'bg-background text-foreground shadow-sm'
+                : 'text-muted-foreground hover:text-foreground'
+            }`}
+          >
+            服务端模式（默认）
+          </button>
+          <button
+            type="button"
+            onClick={() => setGenerationMode('stream')}
+            className={`px-4 py-1.5 rounded-md text-sm font-medium transition-all ${
+              generationMode === 'stream'
+                ? 'bg-background text-foreground shadow-sm'
+                : 'text-muted-foreground hover:text-foreground'
+            }`}
+          >
+            流式模式（补问确认）
+          </button>
+        </div>
+      </div>
+
       {/* Danger Zone - Clear Cache */}
       <div className="relative rounded-xl border border-destructive/30 bg-destructive/[0.03] dark:bg-destructive/[0.06] overflow-hidden">
         {/* Subtle diagonal stripe pattern for danger emphasis */}

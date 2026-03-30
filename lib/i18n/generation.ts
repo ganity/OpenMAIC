@@ -62,6 +62,10 @@ export const generationZhCN = {
     webSearching: '网络搜索',
     webSearchingDesc: '正在搜索网络获取最新资料',
     webSearchFailed: '网络搜索失败',
+    // Server-side generation
+    serverGenerating: '服务端生成中',
+    serverGeneratingDesc: '后台持续生成，关闭页面后不会中断...',
+    sceneGenerateFailed: '场景生成失败，请重试',
   },
 } as const;
 
@@ -131,5 +135,9 @@ export const generationEnUS = {
     webSearching: 'Web Search',
     webSearchingDesc: 'Searching the web for up-to-date information',
     webSearchFailed: 'Web search failed',
+    // Server-side generation
+    serverGenerating: 'Server Generation',
+    serverGeneratingDesc: 'Running in the background, closing this page won\'t interrupt it...',
+    sceneGenerateFailed: 'Scene generation failed, please retry',
   },
 } as const;

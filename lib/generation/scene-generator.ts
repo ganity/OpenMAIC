@@ -17,6 +17,7 @@ import type {
   ScientificModel,
   PdfImage,
   ImageMapping,
+  GenerationMetadata,
 } from '@/lib/types/generation';
 import type { LanguageModel } from 'ai';
 import type { StageStore } from '@/lib/api/stage-api';
@@ -24,6 +25,8 @@ import { createStageAPI } from '@/lib/api/stage-api';
 import { generatePBLContent } from '@/lib/pbl/generate-pbl';
 import { buildPrompt, PROMPT_IDS } from './prompts';
 import { postProcessInteractiveHtml } from './interactive-post-processor';
+import { formatTrainingStrategyForPrompt } from './training-strategy';
+import { formatReviewPolicyPrompt, formatTemplateFamilyPrompt } from './template-prompt-config';
 import { parseActionsFromStructuredOutput } from './action-parser';
 import { parseJsonResponse } from './json-repair';
 import {
@@ -155,6 +158,7 @@ export async function generateSceneContent(
   visionEnabled?: boolean,
   generatedMediaMapping?: ImageMapping,
   agents?: AgentInfo[],
+  metadata?: GenerationMetadata,
 ): Promise<
   | GeneratedSlideContent
   | GeneratedQuizContent
@@ -162,12 +166,27 @@ export async function generateSceneContent(
   | GeneratedPBLContent
   | null
 > {
+  if (metadata?.trainingStrategy) {
+    const s = metadata.trainingStrategy;
+    log.info(
+      `[模板选择] scene-content type=${outline.type} family=${s.templateFamily} sourceMode=${s.sourceMode} riskLevel=${s.riskLevel} scene="${outline.title}"`,
+    );
+  }
   // If outline is interactive but missing interactiveConfig, fall back to slide
   if (outline.type === 'interactive' && !outline.interactiveConfig) {
     log.warn(
       `Interactive outline "${outline.title}" missing interactiveConfig, falling back to slide`,
     );
     const fallbackOutline = { ...outline, type: 'slide' as const };
+    const metadataText = metadata?.trainingStrategy
+      ? formatTrainingStrategyForPrompt(metadata.trainingStrategy)
+      : '';
+    const metadataFamilyPrompt = metadata?.trainingStrategy
+      ? formatTemplateFamilyPrompt(metadata.trainingStrategy)
+      : '';
+    const metadataReviewPrompt = metadata?.trainingStrategy
+      ? formatReviewPolicyPrompt(metadata.trainingStrategy)
+      : '';
     return generateSlideContent(
       fallbackOutline,
       aiCall,
@@ -176,11 +195,23 @@ export async function generateSceneContent(
       visionEnabled,
       generatedMediaMapping,
       agents,
+      metadataText,
+      metadataFamilyPrompt,
+      metadataReviewPrompt,
     );
   }
 
   switch (outline.type) {
-    case 'slide':
+    case 'slide': {
+      const metadataText = metadata?.trainingStrategy
+        ? formatTrainingStrategyForPrompt(metadata.trainingStrategy)
+        : '';
+      const metadataFamilyPrompt = metadata?.trainingStrategy
+        ? formatTemplateFamilyPrompt(metadata.trainingStrategy)
+        : '';
+      const metadataReviewPrompt = metadata?.trainingStrategy
+        ? formatReviewPolicyPrompt(metadata.trainingStrategy)
+        : '';
       return generateSlideContent(
         outline,
         aiCall,
@@ -189,9 +220,17 @@ export async function generateSceneContent(
         visionEnabled,
         generatedMediaMapping,
         agents,
+        metadataText,
+        metadataFamilyPrompt,
+        metadataReviewPrompt,
       );
-    case 'quiz':
-      return generateQuizContent(outline, aiCall);
+    }
+    case 'quiz': {
+      const metadataText = metadata?.trainingStrategy
+        ? formatTrainingStrategyForPrompt(metadata.trainingStrategy)
+        : '';
+      return generateQuizContent(outline, aiCall, metadataText);
+    }
     case 'interactive':
       return generateInteractiveContent(outline, aiCall, outline.language);
     case 'pbl':
@@ -466,6 +505,9 @@ async function generateSlideContent(
   visionEnabled?: boolean,
   generatedMediaMapping?: ImageMapping,
   agents?: AgentInfo[],
+  trainingStrategy?: string,
+  templateFamilyPrompt?: string,
+  reviewPolicyPrompt?: string,
 ): Promise<GeneratedSlideContent | null> {
   const lang = outline.language || 'zh-CN';
 
@@ -544,6 +586,9 @@ async function generateSlideContent(
     canvas_width: canvasWidth,
     canvas_height: canvasHeight,
     teacherContext,
+    trainingStrategy: trainingStrategy || '',
+    templateFamilyPrompt: templateFamilyPrompt || '',
+    reviewPolicyPrompt: reviewPolicyPrompt || '',
   });
 
   if (!prompts) {
@@ -632,6 +677,7 @@ async function generateSlideContent(
 async function generateQuizContent(
   outline: SceneOutline,
   aiCall: AICallFn,
+  trainingStrategy?: string,
 ): Promise<GeneratedQuizContent | null> {
   const quizConfig = outline.quizConfig || {
     questionCount: 3,
@@ -646,6 +692,7 @@ async function generateQuizContent(
     questionCount: quizConfig.questionCount,
     difficulty: quizConfig.difficulty,
     questionTypes: quizConfig.questionTypes.join(', '),
+    trainingStrategy: trainingStrategy || '',
   });
 
   if (!prompts) {
@@ -916,8 +963,18 @@ export async function generateSceneActions(
   ctx?: SceneGenerationContext,
   agents?: AgentInfo[],
   userProfile?: string,
+  metadata?: GenerationMetadata,
 ): Promise<Action[]> {
   const agentsText = formatAgentsForPrompt(agents);
+  const trainingStrategy = metadata?.trainingStrategy
+    ? formatTrainingStrategyForPrompt(metadata.trainingStrategy)
+    : '';
+  const templateFamilyPrompt = metadata?.trainingStrategy
+    ? formatTemplateFamilyPrompt(metadata.trainingStrategy)
+    : '';
+  const reviewPolicyPrompt = metadata?.trainingStrategy
+    ? formatReviewPolicyPrompt(metadata.trainingStrategy)
+    : '';
 
   if (outline.type === 'slide' && 'elements' in content) {
     // Format element list for AI to select from
@@ -931,6 +988,9 @@ export async function generateSceneActions(
       courseContext: buildCourseContext(ctx),
       agents: agentsText,
       userProfile: userProfile || '',
+      trainingStrategy,
+      templateFamilyPrompt,
+      reviewPolicyPrompt,
     });
 
     if (!prompts) {
@@ -959,6 +1019,9 @@ export async function generateSceneActions(
       questions: questionsText,
       courseContext: buildCourseContext(ctx),
       agents: agentsText,
+      trainingStrategy,
+      templateFamilyPrompt,
+      reviewPolicyPrompt,
     });
 
     if (!prompts) {
@@ -1013,6 +1076,9 @@ export async function generateSceneActions(
       projectDescription: pblConfig?.projectDescription || outline.description,
       courseContext: buildCourseContext(ctx),
       agents: agentsText,
+      trainingStrategy,
+      templateFamilyPrompt,
+      reviewPolicyPrompt,
     });
 
     if (!prompts) {

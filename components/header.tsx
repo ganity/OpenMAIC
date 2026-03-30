@@ -10,6 +10,9 @@ import {
   Download,
   FileDown,
   Package,
+  Pencil,
+  Eye,
+  Check,
 } from 'lucide-react';
 import { useI18n } from '@/lib/hooks/use-i18n';
 import { useTheme } from '@/lib/hooks/use-theme';
@@ -21,6 +24,11 @@ import { useSettingsStore } from '@/lib/store/settings';
 import { useStageStore } from '@/lib/store/stage';
 import { useMediaGenerationStore } from '@/lib/store/media-generation';
 import { useExportPPTX } from '@/lib/export/use-export-pptx';
+import { db } from '@/lib/utils/database';
+import type { SpeechAction } from '@/lib/types/action';
+import { createLogger } from '@/lib/logger';
+
+const log = createLogger('Header');
 
 interface HeaderProps {
   readonly currentSceneTitle: string;
@@ -37,6 +45,84 @@ export function Header({ currentSceneTitle }: HeaderProps) {
   // Model setup state
   const currentModelId = useSettingsStore((s) => s.modelId);
   const needsSetup = !currentModelId;
+
+  // Edit mode
+  const mode = useStageStore((s) => s.mode);
+  const setMode = useStageStore((s) => s.setMode);
+  const isEditMode = mode === 'autonomous';
+  const [isSaving, setIsSaving] = useState(false);
+  const [saveSuccess, setSaveSuccess] = useState(false);
+
+  const saveToServer = useCallback(async () => {
+    const { stage, scenes } = useStageStore.getState();
+    if (!stage || scenes.length === 0) return;
+    setIsSaving(true);
+    try {
+      const blobToBase64 = (blob: Blob): Promise<string> =>
+        new Promise((res, rej) => {
+          const reader = new FileReader();
+          reader.onload = () => res(reader.result as string);
+          reader.onerror = rej;
+          reader.readAsDataURL(blob);
+        });
+
+      const mediaBase64: Record<string, string> = {};
+      const mediaTasks = useMediaGenerationStore.getState().tasks;
+      await Promise.all(
+        Object.entries(mediaTasks).map(async ([placeholder, task]) => {
+          if (task.objectUrl) {
+            try {
+              const resp = await fetch(task.objectUrl);
+              mediaBase64[placeholder] = await blobToBase64(await resp.blob());
+            } catch (e) {
+              log.warn('Failed to read media objectUrl for', placeholder, e);
+            }
+          }
+          if (task.poster) {
+            try {
+              const resp = await fetch(task.poster);
+              mediaBase64[`${placeholder}_poster`] = await blobToBase64(await resp.blob());
+            } catch (e) {
+              log.warn('Failed to read poster objectUrl for', placeholder, e);
+            }
+          }
+        }),
+      );
+
+      const audioBase64: Record<string, string> = {};
+      const allAudioIds = scenes.flatMap((s) =>
+        (s.actions || [])
+          .filter((a): a is SpeechAction => a.type === 'speech' && !!(a as SpeechAction).audioId)
+          .map((a) => a.audioId as string),
+      );
+      await Promise.all(
+        allAudioIds.map(async (audioId) => {
+          try {
+            const record = await db.audioFiles.get(audioId);
+            if (record?.blob) audioBase64[audioId] = await blobToBase64(record.blob);
+          } catch (e) {
+            log.warn('Failed to read audio blob for', audioId, e);
+          }
+        }),
+      );
+
+      const res = await fetch('/api/classroom', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ stage, scenes, mediaBase64, audioBase64 }),
+      });
+      if (res.ok) {
+        setSaveSuccess(true);
+        setTimeout(() => setSaveSuccess(false), 2000);
+      } else {
+        log.warn('[Header] Failed to save to server:', res.status);
+      }
+    } catch (err) {
+      log.warn('[Header] Save error:', err);
+    } finally {
+      setIsSaving(false);
+    }
+  }, []);
 
   // Export
   const { exporting: isExporting, exportPPTX, exportResourcePack } = useExportPPTX();
@@ -236,6 +322,37 @@ export function Header({ currentSceneTitle }: HeaderProps) {
             )}
           </div>
         </div>
+
+        {/* Edit / Preview Toggle */}
+        <button
+          onClick={async () => {
+            if (isEditMode) {
+              await saveToServer();
+              setMode('playback');
+            } else {
+              setMode('autonomous');
+            }
+          }}
+          disabled={isSaving}
+          className={cn(
+            'flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-medium transition-all',
+            isEditMode
+              ? 'bg-amber-50 dark:bg-amber-900/20 text-amber-600 dark:text-amber-400 border border-amber-200 dark:border-amber-700 hover:bg-amber-100 dark:hover:bg-amber-900/40 disabled:opacity-60'
+              : 'bg-white/60 dark:bg-gray-800/60 text-gray-500 dark:text-gray-400 border border-gray-100/50 dark:border-gray-700/50 hover:bg-white dark:hover:bg-gray-700 hover:text-gray-800 dark:hover:text-gray-200 shadow-sm',
+          )}
+        >
+          {isEditMode ? (
+            isSaving ? (
+              <><Loader2 className="w-3.5 h-3.5 animate-spin" /><span>保存中...</span></>
+            ) : saveSuccess ? (
+              <><Check className="w-3.5 h-3.5" /><span>已保存</span></>
+            ) : (
+              <><Eye className="w-3.5 h-3.5" /><span>完成编辑</span></>
+            )
+          ) : (
+            <><Pencil className="w-3.5 h-3.5" /><span>编辑</span></>
+          )}
+        </button>
 
         {/* Export Dropdown */}
         <div className="relative" ref={exportRef}>

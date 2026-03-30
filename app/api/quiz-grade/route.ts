@@ -10,6 +10,12 @@ import { callLLM } from '@/lib/ai/llm';
 import { createLogger } from '@/lib/logger';
 import { apiError, apiSuccess } from '@/lib/server/api-response';
 import { resolveModelFromHeaders } from '@/lib/server/resolve-model';
+import { appendTelemetryEvent } from '@/lib/server/telemetry';
+import {
+  applyReviewerPolicy,
+  buildReviewerPrompts,
+  deriveReviewerPolicy,
+} from '@/lib/generation/reviewer-policy';
 const log = createLogger('Quiz Grade');
 
 interface GradeRequest {
@@ -18,17 +24,28 @@ interface GradeRequest {
   points: number;
   commentPrompt?: string;
   language?: string;
+  trainingStrategy?: string;
+  sourceMode?: string;
+  riskLevel?: string;
 }
 
 interface GradeResponse {
   score: number;
   comment: string;
+  reasonCodes?: string[];
+  policyApplied?: {
+    strictness: 'strict' | 'balanced' | 'lenient';
+    evidenceRequired: boolean;
+    allowPartialCredit: boolean;
+    sourceMode?: string;
+    riskLevel?: string;
+  };
 }
 
 export async function POST(req: NextRequest) {
   try {
     const body = (await req.json()) as GradeRequest;
-    const { question, userAnswer, points, commentPrompt, language } = body;
+    const { question, userAnswer, points, commentPrompt, language, trainingStrategy, sourceMode, riskLevel } = body;
 
     if (!question || !userAnswer) {
       return apiError('MISSING_REQUIRED_FIELD', 400, 'question and userAnswer are required');
@@ -37,23 +54,16 @@ export async function POST(req: NextRequest) {
     // Resolve model from request headers
     const { model: languageModel } = resolveModelFromHeaders(req);
 
-    const isZh = language === 'zh-CN';
-
-    const systemPrompt = isZh
-      ? `你是一位专业的教育评估专家。请根据题目和学生答案进行评分并给出简短评语。
-必须以如下 JSON 格式回复（不要包含其他内容）：
-{"score": <0到${points}的整数>, "comment": "<一两句评语>"}`
-      : `You are a professional educational assessor. Grade the student's answer and provide brief feedback.
-You must reply in the following JSON format only (no other content):
-{"score": <integer from 0 to ${points}>, "comment": "<one or two sentences of feedback>"}`;
-
-    const userPrompt = isZh
-      ? `题目：${question}
-满分：${points}分
-${commentPrompt ? `评分要点：${commentPrompt}\n` : ''}学生答案：${userAnswer}`
-      : `Question: ${question}
-Full marks: ${points} points
-${commentPrompt ? `Grading guidance: ${commentPrompt}\n` : ''}Student answer: ${userAnswer}`;
+    const policy = deriveReviewerPolicy({ sourceMode, riskLevel });
+    const { systemPrompt, userPrompt } = buildReviewerPrompts({
+      language,
+      question,
+      userAnswer,
+      points,
+      commentPrompt,
+      trainingStrategy,
+      policy,
+    });
 
     const result = await callLLM(
       {
@@ -73,19 +83,60 @@ ${commentPrompt ? `Grading guidance: ${commentPrompt}\n` : ''}Student answer: ${
       const jsonMatch = text.match(/\{[\s\S]*\}/);
       if (!jsonMatch) throw new Error('No JSON found');
       const parsed = JSON.parse(jsonMatch[0]);
+      const gated = applyReviewerPolicy({
+        score: Number(parsed.score),
+        points,
+        userAnswer,
+        policy,
+        reasonCodes: Array.isArray(parsed.reasonCodes)
+          ? parsed.reasonCodes.map((code: unknown) => String(code))
+          : [],
+      });
       gradeResult = {
-        score: Math.max(0, Math.min(points, Math.round(Number(parsed.score)))),
+        score: gated.score,
         comment: String(parsed.comment || ''),
+        reasonCodes: gated.reasonCodes,
+        policyApplied: {
+          strictness: policy.strictness,
+          evidenceRequired: policy.evidenceRequired,
+          allowPartialCredit: policy.allowPartialCredit,
+          sourceMode: policy.sourceMode,
+          riskLevel: policy.riskLevel,
+        },
       };
     } catch {
       // Fallback: give partial credit with a generic comment
+      const fallbackScore = policy.allowPartialCredit ? Math.max(1, Math.round(points * 0.5)) : 0;
       gradeResult = {
-        score: Math.round(points * 0.5),
-        comment: isZh
-          ? '已作答，请参考标准答案。'
-          : 'Answer received. Please refer to the standard answer.',
+        score: fallbackScore,
+        comment:
+          language === 'zh-CN'
+            ? '已作答，请参考标准答案。'
+            : 'Answer received. Please refer to the standard answer.',
+        reasonCodes: [...policy.reasonCodes, 'fallback_parse_error'],
+        policyApplied: {
+          strictness: policy.strictness,
+          evidenceRequired: policy.evidenceRequired,
+          allowPartialCredit: policy.allowPartialCredit,
+          sourceMode: policy.sourceMode,
+          riskLevel: policy.riskLevel,
+        },
       };
     }
+
+    await appendTelemetryEvent({
+      eventType: 'quiz_grade_result',
+      payload: {
+        score: gradeResult.score,
+        points,
+        language: language || 'unknown',
+        sourceMode: sourceMode || 'unknown',
+        riskLevel: riskLevel || 'unknown',
+        hasTrainingStrategy: Boolean(trainingStrategy),
+        reasonCodes: gradeResult.reasonCodes || [],
+        policyApplied: gradeResult.policyApplied || null,
+      },
+    });
 
     return apiSuccess({ ...gradeResult });
   } catch (error) {

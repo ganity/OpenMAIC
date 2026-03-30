@@ -76,11 +76,16 @@ export async function generateMediaForClassroom(
 
   // Collect all media generation requests from outlines
   const requests = outlines.flatMap((o) => o.mediaGenerations ?? []);
-  if (requests.length === 0) return {};
+  log.info(`[Media] classroomId=${classroomId}, total requests=${requests.length}`);
+  if (requests.length === 0) {
+    log.info('[Media] No media generation requests found in outlines, skipping');
+    return {};
+  }
 
   // Resolve providers
   const imageProviderIds = Object.keys(getServerImageProviders());
   const videoProviderIds = Object.keys(getServerVideoProviders());
+  log.info(`[Media] imageProviders=${JSON.stringify(imageProviderIds)}, videoProviders=${JSON.stringify(videoProviderIds)}`);
 
   const mediaMap: Record<string, string> = {};
 
@@ -88,6 +93,7 @@ export async function generateMediaForClassroom(
   // but run the two types in parallel (providers often have limited concurrency).
   const imageRequests = requests.filter((r) => r.type === 'image' && imageProviderIds.length > 0);
   const videoRequests = requests.filter((r) => r.type === 'video' && videoProviderIds.length > 0);
+  log.info(`[Media] imageRequests=${imageRequests.length}, videoRequests=${videoRequests.length}`);
 
   const generateImages = async () => {
     for (const req of imageRequests) {
@@ -179,19 +185,21 @@ export function replaceMediaPlaceholders(scenes: Scene[], mediaMap: Record<strin
     if (scene.type !== 'slide') continue;
     const canvas = (
       scene.content as {
-        canvas?: { elements?: Array<{ id: string; src?: string; type?: string }> };
+        canvas?: { elements?: Array<{ id: string; src?: string; poster?: string; type?: string }> };
       }
     )?.canvas;
     if (!canvas?.elements) continue;
 
     for (const el of canvas.elements) {
-      if (
-        (el.type === 'image' || el.type === 'video') &&
-        typeof el.src === 'string' &&
-        isMediaPlaceholder(el.src) &&
-        mediaMap[el.src]
-      ) {
-        el.src = mediaMap[el.src];
+      if (el.type === 'image' || el.type === 'video') {
+        if (typeof el.src === 'string' && isMediaPlaceholder(el.src) && mediaMap[el.src]) {
+          el.src = mediaMap[el.src];
+        }
+        // 替换视频封面（poster）
+        const posterKey = `${el.id}_poster`;
+        if (el.type === 'video' && mediaMap[posterKey]) {
+          el.poster = mediaMap[posterKey];
+        }
       }
     }
   }
@@ -201,60 +209,87 @@ export function replaceMediaPlaceholders(scenes: Scene[], mediaMap: Record<strin
 // TTS generation
 // ---------------------------------------------------------------------------
 
+// TTS provider 配置解析（内部复用）
+function resolveTTSConfig(): {
+  providerId: TTSProviderId;
+  apiKey: string;
+  ttsBaseUrl: string | undefined;
+  voice: string;
+  format: string;
+} | null {
+  const ttsProviderIds = Object.keys(getServerTTSProviders()).filter(
+    (id) => id !== 'browser-native-tts',
+  );
+  if (ttsProviderIds.length === 0) return null;
+
+  const providerId = ttsProviderIds[0] as TTSProviderId;
+  const apiKey = resolveTTSApiKey(providerId);
+  if (!apiKey) return null;
+
+  return {
+    providerId,
+    apiKey,
+    ttsBaseUrl: resolveTTSBaseUrl(providerId) || TTS_PROVIDERS[providerId]?.defaultBaseUrl,
+    voice: DEFAULT_TTS_VOICES[providerId] || 'default',
+    format: TTS_PROVIDERS[providerId]?.supportedFormats?.[0] || 'mp3',
+  };
+}
+
+// 为单个 scene 生成 TTS，支持逐 scene 立即生成
+export async function generateTTSForScene(
+  scene: Scene,
+  classroomId: string,
+  baseUrl: string,
+): Promise<void> {
+  const config = resolveTTSConfig();
+  if (!config) return;
+
+  const { providerId, apiKey, ttsBaseUrl, voice, format } = config;
+  const audioDir = path.join(CLASSROOMS_DIR, classroomId, 'audio');
+  await ensureDir(audioDir);
+
+  if (!scene.actions) return;
+
+  // 拆分长 speech actions
+  scene.actions = splitLongSpeechActions(scene.actions, providerId);
+
+  for (const action of scene.actions) {
+    if (action.type !== 'speech' || !(action as SpeechAction).text) continue;
+    const speechAction = action as SpeechAction;
+    // 已有 audioUrl 则跳过（避免重复生成）
+    if (speechAction.audioUrl) continue;
+    const audioId = `tts_${action.id}`;
+
+    try {
+      const result = await generateTTS(
+        { providerId, apiKey, baseUrl: ttsBaseUrl, voice, speed: speechAction.speed },
+        speechAction.text,
+      );
+
+      const filename = `${audioId}.${format}`;
+      await fs.writeFile(path.join(audioDir, filename), result.audio);
+
+      speechAction.audioId = audioId;
+      speechAction.audioUrl = mediaServingUrl(baseUrl, classroomId, `audio/${filename}`);
+      log.info(`Generated TTS: ${filename} (${result.audio.length} bytes)`);
+    } catch (err) {
+      log.warn(`TTS generation failed for action ${action.id}:`, err);
+    }
+  }
+}
+
 export async function generateTTSForClassroom(
   scenes: Scene[],
   classroomId: string,
   baseUrl: string,
 ): Promise<void> {
-  const audioDir = path.join(CLASSROOMS_DIR, classroomId, 'audio');
-  await ensureDir(audioDir);
-
-  // Resolve TTS provider (exclude browser-native-tts)
-  const ttsProviderIds = Object.keys(getServerTTSProviders()).filter(
-    (id) => id !== 'browser-native-tts',
-  );
-  if (ttsProviderIds.length === 0) {
+  const config = resolveTTSConfig();
+  if (!config) {
     log.warn('No server TTS provider configured, skipping TTS generation');
     return;
   }
 
-  const providerId = ttsProviderIds[0] as TTSProviderId;
-  const apiKey = resolveTTSApiKey(providerId);
-  if (!apiKey) {
-    log.warn(`No API key for TTS provider "${providerId}", skipping TTS generation`);
-    return;
-  }
-  const ttsBaseUrl = resolveTTSBaseUrl(providerId) || TTS_PROVIDERS[providerId]?.defaultBaseUrl;
-  const voice = DEFAULT_TTS_VOICES[providerId] || 'default';
-  const format = TTS_PROVIDERS[providerId]?.supportedFormats?.[0] || 'mp3';
-
   for (const scene of scenes) {
-    if (!scene.actions) continue;
-
-    // Split long speech actions into multiple shorter ones before TTS generation,
-    // mirroring the client-side approach. Each sub-action gets its own audio file.
-    scene.actions = splitLongSpeechActions(scene.actions, providerId);
-
-    for (const action of scene.actions) {
-      if (action.type !== 'speech' || !(action as SpeechAction).text) continue;
-      const speechAction = action as SpeechAction;
-      const audioId = `tts_${action.id}`;
-
-      try {
-        const result = await generateTTS(
-          { providerId, apiKey, baseUrl: ttsBaseUrl, voice, speed: speechAction.speed },
-          speechAction.text,
-        );
-
-        const filename = `${audioId}.${format}`;
-        await fs.writeFile(path.join(audioDir, filename), result.audio);
-
-        speechAction.audioId = audioId;
-        speechAction.audioUrl = mediaServingUrl(baseUrl, classroomId, `audio/${filename}`);
-        log.info(`Generated TTS: ${filename} (${result.audio.length} bytes)`);
-      } catch (err) {
-        log.warn(`TTS generation failed for action ${action.id}:`, err);
-      }
-    }
+    await generateTTSForScene(scene, classroomId, baseUrl);
   }
 }

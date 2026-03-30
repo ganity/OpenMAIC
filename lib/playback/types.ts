@@ -58,5 +58,8 @@ export interface PlaybackEngineCallbacks {
   /** Get current playback speed multiplier (e.g. 1, 1.5, 2) */
   getPlaybackSpeed?: () => number;
 
+  /** 实时获取最新的 audioUrl（TTS 生成完成后可能后于 engine 创建才写入） */
+  getLatestAudioUrl?: (audioId: string) => string | undefined;
+
   onComplete?: () => void;
 }

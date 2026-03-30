@@ -11,10 +11,26 @@ export const maxDuration = 30;
 export async function POST(req: NextRequest) {
   try {
     const rawBody = (await req.json()) as Partial<GenerateClassroomInput>;
+
+    // 从请求头读取用户模型配置，优先于服务端环境变量
+    const modelConfig: GenerateClassroomInput['modelConfig'] = {
+      model: req.headers.get('x-model') || undefined,
+      apiKey: req.headers.get('x-api-key') || undefined,
+      baseUrl: req.headers.get('x-base-url') || undefined,
+      providerType: req.headers.get('x-provider-type') || undefined,
+    };
+    const hasUserModelConfig = !!(modelConfig.apiKey || modelConfig.baseUrl);
+
     const body: GenerateClassroomInput = {
       requirement: rawBody.requirement || '',
       ...(rawBody.pdfContent ? { pdfContent: rawBody.pdfContent } : {}),
       ...(rawBody.language ? { language: rawBody.language } : {}),
+      ...(rawBody.trainingType ? { trainingType: rawBody.trainingType } : {}),
+      ...(rawBody.templateFamily ? { templateFamily: rawBody.templateFamily } : {}),
+      ...(rawBody.sourceMode ? { sourceMode: rawBody.sourceMode } : {}),
+      ...(rawBody.riskLevel ? { riskLevel: rawBody.riskLevel } : {}),
+      ...(rawBody.assessmentNeeded != null ? { assessmentNeeded: rawBody.assessmentNeeded } : {}),
+      ...(rawBody.trainingStrategy ? { trainingStrategy: rawBody.trainingStrategy } : {}),
       ...(rawBody.enableWebSearch != null ? { enableWebSearch: rawBody.enableWebSearch } : {}),
       ...(rawBody.enableImageGeneration != null
         ? { enableImageGeneration: rawBody.enableImageGeneration }
@@ -24,6 +40,7 @@ export async function POST(req: NextRequest) {
         : {}),
       ...(rawBody.enableTTS != null ? { enableTTS: rawBody.enableTTS } : {}),
       ...(rawBody.agentMode ? { agentMode: rawBody.agentMode } : {}),
+      ...(hasUserModelConfig ? { modelConfig } : {}),
     };
     const { requirement } = body;
 

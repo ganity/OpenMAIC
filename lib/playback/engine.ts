@@ -490,8 +490,13 @@ export class PlaybackEngine {
           }, readingMs);
         };
 
+        // 实时获取最新 audioUrl（TTS 可能在 engine 创建后才生成完毕）
+        const latestAudioUrl =
+          speechAction.audioId
+            ? (this.callbacks.getLatestAudioUrl?.(speechAction.audioId) ?? speechAction.audioUrl)
+            : speechAction.audioUrl;
         this.audioPlayer
-          .play(speechAction.audioId || '', speechAction.audioUrl)
+          .play(speechAction.audioId || '', latestAudioUrl)
           .then((audioStarted) => {
             if (!audioStarted) {
               // No pre-generated audio — try browser-native TTS if selected

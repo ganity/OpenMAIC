@@ -12,6 +12,7 @@ import type {
   ImageMapping,
 } from '@/lib/types/generation';
 import { buildPrompt, PROMPT_IDS } from './prompts';
+import { formatTrainingStrategyForPrompt, formatTemplateFamilyPrompt, formatReviewPolicyPrompt, inferTemplateSelection } from './training-strategy';
 import { formatImageDescription, formatImagePlaceholder } from './prompt-formatters';
 import { parseJsonResponse } from './json-repair';
 import { uniquifyMediaElementIds } from './scene-builder';
@@ -94,7 +95,31 @@ export async function generateSceneOutlinesFromRequirements(
       '**IMPORTANT: Do NOT include any video mediaGenerations (type: "video") in the outlines. Video generation is disabled. Image generation is allowed.**';
   }
 
-  // Use simplified prompt variables
+    const strategy =
+      requirements.trainingStrategy ||
+      inferTemplateSelection({
+        requirement: requirements.requirement,
+        hasDocuments: Boolean(pdfText?.trim() || (pdfImages && pdfImages.length > 0)),
+        documentHints: pdfText,
+      });
+    log.info(
+      `[模板选择] family=${strategy.templateFamily} sourceMode=${strategy.sourceMode} riskLevel=${strategy.riskLevel} confidence=${strategy.confidence.overall} source=${requirements.trainingStrategy ? 'user_preset' : 'inferred'}`,
+    );
+    const trainingStrategy = formatTrainingStrategyForPrompt(strategy);
+    const templateFamilyPrompt = formatTemplateFamilyPrompt(strategy);
+    const reviewPolicyPrompt = formatReviewPolicyPrompt(strategy);
+    const metadata = {
+      trainingStrategy: strategy,
+      trainingType: strategy.trainingType,
+      templateFamily: strategy.templateFamily,
+      sourceMode: strategy.sourceMode,
+      riskLevel: strategy.riskLevel,
+      assessmentNeeded: strategy.assessmentNeeded,
+      confidenceOverall: strategy.confidence.overall,
+      selectionReason: strategy.selectionReason,
+    };
+
+    // Use simplified prompt variables
   const prompts = buildPrompt(PROMPT_IDS.REQUIREMENTS_TO_OUTLINES, {
     // New simplified variables
     requirement: requirements.requirement,
@@ -111,6 +136,9 @@ export async function generateSceneOutlinesFromRequirements(
       options?.researchContext || (requirements.language === 'zh-CN' ? '无' : 'None'),
     // Server-side generation populates this via options; client-side populates via formatTeacherPersonaForPrompt
     teacherContext: options?.teacherContext || '',
+    trainingStrategy,
+    templateFamilyPrompt,
+    reviewPolicyPrompt,
   });
 
   if (!prompts) {
@@ -156,7 +184,7 @@ export async function generateSceneOutlinesFromRequirements(
       totalScenes: result.length,
     });
 
-    return { success: true, data: result };
+    return { success: true, data: result, metadata };
   } catch (error) {
     return { success: false, error: String(error) };
   }

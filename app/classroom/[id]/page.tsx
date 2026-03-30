@@ -12,6 +12,8 @@ import { useWhiteboardHistoryStore } from '@/lib/store/whiteboard-history';
 import { createLogger } from '@/lib/logger';
 import { MediaStageProvider } from '@/lib/contexts/media-stage-context';
 import { generateMediaForOutlines } from '@/lib/media/media-orchestrator';
+import { db } from '@/lib/utils/database';
+import type { SpeechAction } from '@/lib/types/action';
 
 const log = createLogger('Classroom');
 
@@ -25,6 +27,7 @@ export default function ClassroomDetailPage() {
   const [error, setError] = useState<string | null>(null);
 
   const generationStartedRef = useRef(false);
+  const pendingJobPollUrlRef = useRef<string | null>(null);
 
   const { generateRemaining, retrySingleOutline, stop } = useSceneGenerator({
     onComplete: async () => {
@@ -33,13 +36,69 @@ export default function ClassroomDetailPage() {
       const { stage, scenes } = useStageStore.getState();
       if (stage && scenes.length > 0) {
         try {
+          // 将 blob 转 base64 dataUrl 的辅助函数
+          const blobToBase64 = (blob: Blob): Promise<string> =>
+            new Promise((resolve, reject) => {
+              const reader = new FileReader();
+              reader.onload = () => resolve(reader.result as string);
+              reader.onerror = reject;
+              reader.readAsDataURL(blob);
+            });
+
+          // 收集图片/视频媒体文件（objectUrl → base64），随 POST 一起发送给服务端写盘
+          const mediaBase64: Record<string, string> = {};
+          const mediaTasks = useMediaGenerationStore.getState().tasks;
+          await Promise.all(
+            Object.entries(mediaTasks).map(async ([placeholder, task]) => {
+              if (task.objectUrl) {
+                try {
+                  const resp = await fetch(task.objectUrl);
+                  const blob = await resp.blob();
+                  mediaBase64[placeholder] = await blobToBase64(blob);
+                } catch (e) {
+                  log.warn('[Classroom] Failed to read media objectUrl for', placeholder, e);
+                }
+              }
+              if (task.poster) {
+                try {
+                  const resp = await fetch(task.poster);
+                  const blob = await resp.blob();
+                  mediaBase64[`${placeholder}_poster`] = await blobToBase64(blob);
+                } catch (e) {
+                  log.warn('[Classroom] Failed to read poster objectUrl for', placeholder, e);
+                }
+              }
+            }),
+          );
+
+          // 收集 TTS 音频（IndexedDB audioFiles → base64），随 POST 一起发送给服务端写盘
+          const audioBase64: Record<string, string> = {};
+          const allAudioIds = scenes.flatMap((s) =>
+            (s.actions || [])
+              .filter((a): a is SpeechAction => a.type === 'speech' && !!(a as SpeechAction).audioId)
+              .map((a) => a.audioId as string),
+          );
+          await Promise.all(
+            allAudioIds.map(async (audioId) => {
+              try {
+                const record = await db.audioFiles.get(audioId);
+                if (record?.blob) {
+                  audioBase64[audioId] = await blobToBase64(record.blob);
+                }
+              } catch (e) {
+                log.warn('[Classroom] Failed to read audio blob for', audioId, e);
+              }
+            }),
+          );
+
           const res = await fetch('/api/classroom', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ stage, scenes }),
+            body: JSON.stringify({ stage, scenes, mediaBase64, audioBase64 }),
           });
           if (res.ok) {
-            log.info('[Classroom] Persisted to server:', stage.id);
+            const json = await res.json().catch(() => null);
+            log.info('[Classroom] Persisted to server:', json?.id || stage.id);
           } else {
             log.warn('[Classroom] Failed to persist to server:', res.status);
           }
@@ -50,13 +109,27 @@ export default function ClassroomDetailPage() {
     },
   });
 
-  const loadClassroom = useCallback(async () => {
+  const loadClassroom = useCallback(async (pendingPollUrl: string | null = null) => {
     try {
-      await loadFromStorage(classroomId);
-
-      // If IndexedDB had no data, try server-side storage (API-generated classrooms)
-      if (!useStageStore.getState().stage) {
-        log.info('No IndexedDB data, trying server-side storage for:', classroomId);
+      // 检查是否有 pending job（提前跳转场景）—— pendingPollUrl 由 useEffect 在最开始读取并传入
+      if (pendingPollUrl) {
+        log.info('Pending job detected, waiting for first data:', pendingPollUrl);
+        pendingJobPollUrlRef.current = pendingPollUrl;
+        // 等待服务端第一次 persist 数据可读
+        for (let i = 0; i < 60; i++) {
+          await new Promise((r) => setTimeout(r, 2000));
+          try {
+            const checkRes = await fetch(`/api/classroom?id=${encodeURIComponent(classroomId)}`);
+            if (checkRes.ok) {
+              const checkJson = await checkRes.json();
+              if (checkJson.success && checkJson.classroom) {
+                log.info('Classroom data available, loading...');
+                break;
+              }
+            }
+          } catch (e) { /* continue polling */ }
+        }
+        // 从服务端加载第一批数据
         try {
           const res = await fetch(`/api/classroom?id=${encodeURIComponent(classroomId)}`);
           if (res.ok) {
@@ -64,15 +137,33 @@ export default function ClassroomDetailPage() {
             if (json.success && json.classroom) {
               const { stage, scenes } = json.classroom;
               useStageStore.getState().setStage(stage);
-              useStageStore.setState({
-                scenes,
-                currentSceneId: scenes[0]?.id ?? null,
-              });
-              log.info('Loaded from server-side storage:', classroomId);
+              useStageStore.getState().setScenes(scenes);
+              log.info('Loaded from server-side storage (pending job):', classroomId);
             }
           }
         } catch (fetchErr) {
           log.warn('Server-side storage fetch failed:', fetchErr);
+        }
+      } else {
+        await loadFromStorage(classroomId);
+
+        // If IndexedDB had no data, try server-side storage (API-generated classrooms)
+        if (!useStageStore.getState().stage) {
+          log.info('No IndexedDB data, trying server-side storage for:', classroomId);
+          try {
+            const res = await fetch(`/api/classroom?id=${encodeURIComponent(classroomId)}`);
+            if (res.ok) {
+              const json = await res.json();
+              if (json.success && json.classroom) {
+                const { stage, scenes } = json.classroom;
+                useStageStore.getState().setStage(stage);
+                useStageStore.getState().setScenes(scenes);
+                log.info('Loaded from server-side storage:', classroomId);
+              }
+            }
+          } catch (fetchErr) {
+            log.warn('Server-side storage fetch failed:', fetchErr);
+          }
         }
       }
 
@@ -130,7 +221,82 @@ export default function ClassroomDetailPage() {
     // Clear whiteboard history to prevent snapshots from a previous course leaking in.
     useWhiteboardHistoryStore.getState().clearHistory();
 
-    loadClassroom();
+    // 在 effect 最开始就读取并删除 sessionStorage key，避免 React Strict Mode 双重执行时竞争
+    const pendingPollUrl = sessionStorage.getItem(`pendingJob_${classroomId}`);
+    if (pendingPollUrl) {
+      sessionStorage.removeItem(`pendingJob_${classroomId}`);
+    }
+    pendingJobPollUrlRef.current = null;
+    loadClassroom(pendingPollUrl).then(() => {
+      const pollUrl = pendingPollUrl;
+      log.info('[Classroom] loadClassroom done, pendingJobPollUrl:', pollUrl);
+      if (!pollUrl) return;
+
+      // 持续轮询 job 直到完成，每次有新 scenes 时更新 store
+      log.info('[Classroom] Starting background polling for pending job:', pollUrl);
+      let cancelled = false;
+      (async () => {
+        while (!cancelled) {
+          await new Promise((r) => setTimeout(r, 2000));
+          if (cancelled) break;
+          log.info('[Classroom] Background poll tick, cancelled=', cancelled);
+          try {
+            const resp = await fetch(pollUrl);
+            if (!resp.ok) continue;
+            const data = await resp.json();
+            const job = data.data || data;
+
+            // 用 job.outlines 设置 generatingOutlines，让 Stage 显示骨架屏
+            if (job.outlines?.length > 0) {
+              const currentStore = useStageStore.getState();
+              const completedOrders = new Set(currentStore.scenes.map((s: { order: number }) => s.order));
+              const stillPending = job.outlines.filter((o: { order: number }) => !completedOrders.has(o.order));
+              if (stillPending.length !== currentStore.generatingOutlines.length) {
+                useStageStore.setState({ outlines: job.outlines, generatingOutlines: stillPending });
+              }
+            }
+
+            // 从服务端 classroom API 拉取最新 scenes
+            const classRes = await fetch(`/api/classroom?id=${encodeURIComponent(classroomId)}`);
+            if (classRes.ok) {
+              const classJson = await classRes.json();
+              if (classJson.success && classJson.classroom) {
+                const { scenes } = classJson.classroom;
+                const currentScenes = useStageStore.getState().scenes;
+                const hasNewScenes = scenes.length > currentScenes.length;
+                // 检测是否有新的 audioUrl（TTS 生成完成后才写入）
+                const hasNewAudio = !hasNewScenes && scenes.some((s: { order: number; actions?: Array<{ audioUrl?: string }> }, i: number) => {
+                  const cur = currentScenes[i];
+                  if (!cur) return false;
+                  return s.actions?.some((a, j) => a.audioUrl && !(cur.actions as Array<{ audioUrl?: string }>)?.[j]?.audioUrl);
+                });
+                if (hasNewScenes || hasNewAudio) {
+                  log.info(`[Classroom] Updated scenes: ${scenes.length} (was ${currentScenes.length}), hasNewAudio=${hasNewAudio}`);
+                  useStageStore.getState().setScenes(scenes);
+                  // 更新 generatingOutlines
+                  const allOutlines = useStageStore.getState().outlines;
+                  if (allOutlines.length > 0) {
+                    const completedOrders = new Set(scenes.map((s: { order: number }) => s.order));
+                    useStageStore.setState({
+                      generatingOutlines: allOutlines.filter((o) => !completedOrders.has(o.order)),
+                    });
+                  }
+                }
+              }
+            }
+            if (job.done || job.status === 'succeeded' || job.status === 'failed') {
+              log.info('[Classroom] Pending job finished:', job.status);
+              pendingJobPollUrlRef.current = null;
+              // 清空骨架屏
+              useStageStore.setState({ generatingOutlines: [] });
+              break;
+            }
+          } catch (e) { /* continue */ }
+        }
+      })();
+
+      return () => { cancelled = true; };
+    });
 
     // Cancel ongoing generation when classroomId changes or component unmounts
     return () => {

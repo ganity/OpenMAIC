@@ -11,6 +11,8 @@ import { callLLM } from '@/lib/ai/llm';
 import { createLogger } from '@/lib/logger';
 import { apiError, apiSuccess } from '@/lib/server/api-response';
 import { resolveModelFromHeaders } from '@/lib/server/resolve-model';
+import type { GenerationMetadata } from '@/lib/types/generation';
+import { formatTemplateFamilyPrompt } from '@/lib/generation/template-prompt-config';
 
 const log = createLogger('Agent Profiles API');
 
@@ -38,6 +40,7 @@ interface RequestBody {
   availableAvatars: string[];
   avatarDescriptions?: Array<{ path: string; desc: string }>;
   availableVoices?: Array<{ providerId: string; voiceId: string; voiceName: string }>;
+  metadata?: GenerationMetadata;
 }
 
 function stripCodeFences(text: string): string {
@@ -47,6 +50,62 @@ function stripCodeFences(text: string): string {
     cleaned = cleaned.replace(/^```(?:json)?\s*\n?/, '').replace(/\n?```\s*$/, '');
   }
   return cleaned.trim();
+}
+
+function buildAgentProfilesPrompt(args: {
+  stageInfo: RequestBody['stageInfo'];
+  sceneOutlines?: RequestBody['sceneOutlines'];
+  language: string;
+  availableAvatars: string[];
+  avatarDescriptions?: RequestBody['avatarDescriptions'];
+  voicePrompt: string;
+  voiceJsonField: string;
+  metadata?: GenerationMetadata;
+}) {
+  const sceneSummary = args.sceneOutlines?.length
+    ? args.sceneOutlines.map((s, i) => `${i + 1}. ${s.title}${s.description ? ` — ${s.description}` : ''}`).join('\n')
+    : null;
+  const templateFamilyPrompt = formatTemplateFamilyPrompt(args.metadata?.trainingStrategy);
+
+  const systemPrompt = `You are an expert enterprise learning strategist. Generate agent profiles for a multi-agent company training course positioning discussion. Decide the appropriate number of agents (typically 3-5) based on the course topic and organizational complexity. Keep the role values compatible with the existing system: exactly one "teacher" agent as the lead consultant, and the rest as "assistant" or "student" style stakeholder voices. Return ONLY valid JSON, no markdown or explanation.`;
+
+  const userPrompt = `Generate agent profiles for the following company training course discussion:
+
+Course name: ${args.stageInfo.name}
+${args.stageInfo.description ? `Course description: ${args.stageInfo.description}` : ''}
+${sceneSummary ? `\nScene outlines:\n${sceneSummary}\n` : ''}
+${templateFamilyPrompt ? `\nTemplate family guidance:\n${templateFamilyPrompt}\n` : ''}
+Requirements:
+- Decide the appropriate number of agents based on the training topic and organizational complexity (typically 3-5)
+- Exactly 1 agent must have role "teacher"; this role represents the lead training consultant
+- The remaining agents can be "assistant" or "student", but their personas should represent learning design, business, learner, or organization stakeholder perspectives
+- Priority values: teacher=10 (highest), assistant=7, student=4-6
+- Each agent needs: name, role, persona (2-3 sentences describing their professional perspective, responsibilities, and discussion style for company training course positioning)
+- Names and personas must be in language: ${args.language}
+- Agent mix must reflect the template family guidance above. For policy/safety, prefer stricter compliance and risk-aware personas. For skill/product, prefer scenario, practice, learner adoption, and business application perspectives.
+- Each agent must be assigned one avatar from this list: ${JSON.stringify(args.avatarDescriptions && args.avatarDescriptions.length > 0 ? args.avatarDescriptions.map((a) => ({ path: a.path, description: a.desc })) : args.availableAvatars)}
+  - Pick an avatar that visually matches the agent's personality and role
+  - Try to use different avatars for each agent
+  - Use the "path" value as the avatar field in the output
+- Each agent must be assigned one color from this list: ${JSON.stringify(COLOR_PALETTE)}
+  - Each agent must have a different color
+${args.voicePrompt}
+
+Return a JSON object with this exact structure:
+{
+  "agents": [
+    {
+      "name": "string",
+      "role": "teacher" | "assistant" | "student",
+      "persona": "string (2-3 sentences)",
+      "avatar": "string (from available list)",
+      "color": "string (hex color from palette)",
+      "priority": number (10 for teacher, 7 for assistant, 4-6 for student)${args.voiceJsonField}
+    }
+  ]
+}`;
+
+  return { systemPrompt, userPrompt };
 }
 
 export async function POST(req: NextRequest) {
@@ -59,6 +118,7 @@ export async function POST(req: NextRequest) {
       availableAvatars,
       avatarDescriptions,
       availableVoices,
+      metadata,
     } = body;
 
     // ── Validate required fields ──
@@ -80,15 +140,6 @@ export async function POST(req: NextRequest) {
     const { model: languageModel, modelString } = resolveModelFromHeaders(req);
 
     // ── Build prompt ──
-    const sceneSummary = sceneOutlines?.length
-      ? sceneOutlines
-          .map((s, i) => `${i + 1}. ${s.title}${s.description ? ` — ${s.description}` : ''}`)
-          .join('\n')
-      : null;
-
-    const systemPrompt = `You are an expert enterprise learning strategist. Generate agent profiles for a multi-agent company training course positioning discussion. Decide the appropriate number of agents (typically 3-5) based on the course topic and organizational complexity. Keep the role values compatible with the existing system: exactly one \"teacher\" agent as the lead consultant, and the rest as \"assistant\" or \"student\" style stakeholder voices. Return ONLY valid JSON, no markdown or explanation.`;
-
-    // Build voice list for prompt (if available)
     const voiceListStr =
       availableVoices && availableVoices.length > 0
         ? JSON.stringify(
@@ -109,39 +160,16 @@ export async function POST(req: NextRequest) {
       ? ',\n      "voice": "string (voice id from available list, e.g. \'qwen-tts::Cherry\')"'
       : '';
 
-    const userPrompt = `Generate agent profiles for the following company training course discussion:
-
-Course name: ${stageInfo.name}
-${stageInfo.description ? `Course description: ${stageInfo.description}` : ''}
-${sceneSummary ? `\nScene outlines:\n${sceneSummary}\n` : ''}
-Requirements:
-- Decide the appropriate number of agents based on the training topic and organizational complexity (typically 3-5)
-- Exactly 1 agent must have role "teacher"; this role represents the lead training consultant
-- The remaining agents can be "assistant" or "student", but their personas should represent learning design, business, learner, or organization stakeholder perspectives
-- Priority values: teacher=10 (highest), assistant=7, student=4-6
-- Each agent needs: name, role, persona (2-3 sentences describing their professional perspective, responsibilities, and discussion style for company training course positioning)
-- Names and personas must be in language: ${language}
-- Each agent must be assigned one avatar from this list: ${JSON.stringify(avatarDescriptions && avatarDescriptions.length > 0 ? avatarDescriptions.map((a) => ({ path: a.path, description: a.desc })) : availableAvatars)}
-  - Pick an avatar that visually matches the agent's personality and role
-  - Try to use different avatars for each agent
-  - Use the "path" value as the avatar field in the output
-- Each agent must be assigned one color from this list: ${JSON.stringify(COLOR_PALETTE)}
-  - Each agent must have a different color
-${voicePrompt}
-
-Return a JSON object with this exact structure:
-{
-  "agents": [
-    {
-      "name": "string",
-      "role": "teacher" | "assistant" | "student",
-      "persona": "string (2-3 sentences)",
-      "avatar": "string (from available list)",
-      "color": "string (hex color from palette)",
-      "priority": number (10 for teacher, 7 for assistant, 4-6 for student)${voiceJsonField}
-    }
-  ]
-}`;
+    const { systemPrompt, userPrompt } = buildAgentProfilesPrompt({
+      stageInfo,
+      sceneOutlines,
+      language,
+      availableAvatars,
+      avatarDescriptions,
+      voicePrompt,
+      voiceJsonField,
+      metadata,
+    });
 
     log.info(`Generating agent profiles for "${stageInfo.name}" [model=${modelString}]`);
 

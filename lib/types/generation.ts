@@ -7,6 +7,15 @@
 
 import type { ActionType } from './action';
 import type { MediaGenerationRequest } from '@/lib/media/types';
+import type {
+  TemplateSelectionResult,
+  TrainingStrategy,
+  TrainingType,
+  TemplateFamily,
+  SourceMode,
+  RiskLevel,
+  DeliveryMode,
+} from '@/lib/generation/training-strategy';
 
 // ==================== PDF Image Types ====================
 
@@ -68,7 +77,27 @@ export interface UserRequirements {
   userNickname?: string; // Student nickname for personalization
   userBio?: string; // Student background for personalization
   webSearch?: boolean; // Enable web search for richer context
+  trainingType?: TrainingType;
+  templateFamily?: TemplateFamily;
+  sourceMode?: SourceMode;
+  riskLevel?: RiskLevel;
+  deliveryMode?: DeliveryMode;
+  assessmentNeeded?: boolean;
+  trainingStrategy?: TemplateSelectionResult;
 }
+
+export interface GenerationMetadata {
+  trainingStrategy?: TemplateSelectionResult;
+  trainingType?: TrainingType;
+  templateFamily?: TemplateFamily;
+  sourceMode?: SourceMode;
+  riskLevel?: RiskLevel;
+  assessmentNeeded?: boolean;
+  confidenceOverall?: TemplateSelectionResult['confidence']['overall'];
+  selectionReason?: string;
+  clarificationQuestions?: string[];
+}
+
 
 /**
  * @deprecated Use UserRequirements instead

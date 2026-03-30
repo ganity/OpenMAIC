@@ -57,6 +57,7 @@ export interface GenerationResult<T> {
   success: boolean;
   data?: T;
   error?: string;
+  metadata?: import('@/lib/types/generation').GenerationMetadata;
 }
 
 export interface GenerationCallbacks {

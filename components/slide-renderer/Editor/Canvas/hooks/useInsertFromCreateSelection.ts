@@ -1,11 +1,16 @@
 import { useCallback, type RefObject } from 'react';
 import { useCanvasStore } from '@/lib/store';
 import type { CreateElementSelectionData } from '@/lib/types/edit';
+import { useCanvasOperations } from '@/lib/hooks/use-canvas-operations';
+import { useHistorySnapshot } from '@/lib/hooks/use-history-snapshot';
+import { nanoid } from 'nanoid';
 
 export function useInsertFromCreateSelection(viewportRef: RefObject<HTMLElement | null>) {
   const canvasScale = useCanvasStore.use.canvasScale();
   const creatingElement = useCanvasStore.use.creatingElement();
   const setCreatingElement = useCanvasStore.use.setCreatingElement();
+  const { addElement } = useCanvasOperations();
+  const { addHistorySnapshot } = useHistorySnapshot();
 
   // Calculate selection position and size from the start and end points of mouse drag selection
   const formatCreateSelection = useCallback(
@@ -73,8 +78,20 @@ export function useInsertFromCreateSelection(viewportRef: RefObject<HTMLElement 
       const type = creatingElement.type;
       if (type === 'text') {
         const position = formatCreateSelection(selectionData);
-        if (position) {
-          // TODO: Implement createTextElement
+        if (position && position.width > 10 && position.height > 10) {
+          addElement({
+            id: nanoid(10),
+            type: 'text',
+            left: position.left,
+            top: position.top,
+            width: position.width,
+            height: position.height,
+            rotate: 0,
+            content: '<p><span style="font-size: 20px;">文本框</span></p>',
+            defaultFontName: 'Microsoft Yahei',
+            defaultColor: '#333333',
+          });
+          addHistorySnapshot();
         }
       } else if (type === 'shape') {
         const position = formatCreateSelection(selectionData);

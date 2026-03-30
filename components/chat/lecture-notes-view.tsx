@@ -1,10 +1,13 @@
 'use client';
 
-import { useEffect, useRef } from 'react';
-import { BookOpen, MessageSquare, Flashlight, MousePointer2, Play } from 'lucide-react';
+import { useEffect, useRef, useState, useCallback } from 'react';
+import { BookOpen, Flashlight, MousePointer2, Play, Pencil, Check, X, Loader2 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useI18n } from '@/lib/hooks/use-i18n';
 import type { LectureNoteEntry } from '@/lib/types/chat';
+import { useStageStore } from '@/lib/store';
+import { generateAndStoreTTS } from '@/lib/hooks/use-scene-generator';
+import type { SpeechAction } from '@/lib/types/action';
 
 const ACTION_ICON_ONLY: Record<string, { Icon: typeof Flashlight; style: string }> = {
   spotlight: {
@@ -29,9 +32,20 @@ interface LectureNotesViewProps {
   currentSceneId?: string | null;
 }
 
+interface EditingState {
+  sceneId: string;
+  actionId: string;
+  text: string;
+}
+
 export function LectureNotesView({ notes, currentSceneId }: LectureNotesViewProps) {
   const { t } = useI18n();
   const containerRef = useRef<HTMLDivElement>(null);
+  const [editing, setEditing] = useState<EditingState | null>(null);
+  const [savingActionId, setSavingActionId] = useState<string | null>(null);
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const scenes = useStageStore((s) => s.scenes);
+  const updateScene = useStageStore((s) => s.updateScene);
 
   // Auto-scroll to the current scene note
   useEffect(() => {
@@ -41,6 +55,70 @@ export function LectureNotesView({ notes, currentSceneId }: LectureNotesViewProp
       el.scrollIntoView({ behavior: 'smooth', block: 'center' });
     }
   }, [currentSceneId]);
+
+  // Auto-resize textarea
+  useEffect(() => {
+    if (textareaRef.current) {
+      textareaRef.current.style.height = 'auto';
+      textareaRef.current.style.height = textareaRef.current.scrollHeight + 'px';
+    }
+  }, [editing?.text]);
+
+  const startEditing = useCallback((sceneId: string, actionId: string, text: string) => {
+    setEditing({ sceneId, actionId, text });
+  }, []);
+
+  const cancelEditing = useCallback(() => {
+    setEditing(null);
+  }, []);
+
+  const saveEditing = useCallback(async () => {
+    if (!editing) return;
+    const { sceneId, actionId, text } = editing;
+    if (!text.trim()) return;
+
+    setSavingActionId(actionId);
+    setEditing(null);
+
+    try {
+      // 更新 scene 中对应 SpeechAction 的文本
+      const scene = scenes.find((s) => s.id === sceneId);
+      if (!scene) return;
+
+      const updatedActions = (scene.actions || []).map((a) => {
+        if (a.id === actionId && a.type === 'speech') {
+          return { ...a, text } as SpeechAction;
+        }
+        return a;
+      });
+
+      updateScene(sceneId, { actions: updatedActions });
+
+      void fetch('/api/telemetry', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          eventType: 'manual_edit_hotspot',
+          payload: {
+            editType: 'speech_note_edit',
+            sceneId,
+            actionId,
+            textLength: text.length,
+          },
+        }),
+      }).catch(() => {
+        // telemetry must not block manual editing flow
+      });
+
+      // 重新生成 TTS 音频（覆盖旧的）
+      const audioId = `tts_${actionId}`;
+      await generateAndStoreTTS(audioId, text);
+    } catch (err) {
+      console.error('TTS regeneration failed:', err);
+    } finally {
+      setSavingActionId(null);
+    }
+  }, [editing, scenes, updateScene]);
 
   // Empty state
   if (notes.length === 0) {
@@ -52,7 +130,7 @@ export function LectureNotesView({ notes, currentSceneId }: LectureNotesViewProp
         <p className="text-xs font-medium text-gray-500 dark:text-gray-400">
           {t('chat.lectureNotes.empty')}
         </p>
-        <p className="text-[10px] text-gray-400 dark:text-gray-500 mt-1">
+        <p className="text-xs text-gray-400 dark:text-gray-500 mt-1">
           {t('chat.lectureNotes.emptyHint')}
         </p>
       </div>
@@ -60,133 +138,189 @@ export function LectureNotesView({ notes, currentSceneId }: LectureNotesViewProp
   }
 
   return (
-    <div
-      ref={containerRef}
-      className="flex-1 overflow-y-auto overflow-x-hidden px-3 py-2 scrollbar-hide"
-    >
-      {notes.map((note, index) => {
-        const isCurrent = note.sceneId === currentSceneId;
-        const pageNum = index + 1;
+    <div ref={containerRef} className="h-full overflow-y-auto px-3 py-3 space-y-4">
+      {notes.map((note, noteIdx) => {
+        const pageNum = noteIdx + 1;
         const pageLabel = t('chat.lectureNotes.pageLabel').replace('{n}', String(pageNum));
+        const isCurrentScene = note.sceneId === currentSceneId;
 
         return (
           <div
             key={note.sceneId}
             data-scene-id={note.sceneId}
             className={cn(
-              'relative mb-3 last:mb-0 rounded-lg px-3 py-2.5 transition-colors duration-200',
-              isCurrent
-                ? 'bg-purple-50/80 dark:bg-purple-950/25 ring-1 ring-purple-200/60 dark:ring-purple-700/30'
-                : 'bg-gray-50/50 dark:bg-gray-800/30',
+              'rounded-xl border transition-colors duration-300',
+              isCurrentScene
+                ? 'border-purple-200/80 dark:border-purple-700/50 bg-purple-50/40 dark:bg-purple-900/10'
+                : 'border-gray-100 dark:border-gray-800 bg-white dark:bg-gray-900/40',
             )}
           >
-            {/* Page label row */}
-            <div className="flex items-center gap-2 mb-1.5">
-              {/* Timeline dot */}
-              <div
-                className={cn(
-                  'w-2 h-2 rounded-full shrink-0',
-                  isCurrent
-                    ? 'bg-purple-500 dark:bg-purple-400 shadow-sm shadow-purple-400/40'
-                    : 'bg-gray-300 dark:bg-gray-600',
-                )}
-              />
+            {/* Scene header */}
+            <div
+              className={cn(
+                'flex items-center gap-2 px-3 py-2 rounded-t-xl border-b',
+                isCurrentScene
+                  ? 'border-purple-100/80 dark:border-purple-800/40 bg-purple-50/60 dark:bg-purple-900/20'
+                  : 'border-gray-100 dark:border-gray-800 bg-gray-50/50 dark:bg-gray-800/30',
+              )}
+            >
               <span
                 className={cn(
-                  'text-[10px] font-semibold tracking-wide',
-                  isCurrent
-                    ? 'text-purple-600 dark:text-purple-400'
-                    : 'text-gray-400 dark:text-gray-500',
+                  'text-[10px] font-semibold px-1.5 py-0.5 rounded-full',
+                  isCurrentScene
+                    ? 'bg-purple-100 dark:bg-purple-800/50 text-purple-600 dark:text-purple-300'
+                    : 'bg-gray-100 dark:bg-gray-700/60 text-gray-500 dark:text-gray-400',
                 )}
               >
                 {pageLabel}
               </span>
-              {isCurrent && (
-                <span className="text-[9px] font-bold px-1.5 py-px rounded-full bg-purple-100 dark:bg-purple-900/40 text-purple-600 dark:text-purple-300">
+              {isCurrentScene && (
+                <span className="text-[10px] font-medium text-purple-500 dark:text-purple-400">
                   {t('chat.lectureNotes.currentPage')}
                 </span>
               )}
+              <span
+                className={cn(
+                  'text-xs font-medium truncate flex-1 min-w-0',
+                  isCurrentScene
+                    ? 'text-purple-700 dark:text-purple-300'
+                    : 'text-gray-600 dark:text-gray-300',
+                )}
+              >
+                {note.sceneTitle}
+              </span>
             </div>
 
-            {/* Scene title */}
-            <h4 className="text-[13px] font-bold text-gray-800 dark:text-gray-100 mb-1.5 leading-snug pl-4">
-              {note.sceneTitle}
-            </h4>
-
-            {/* Ordered items: spotlight/laser inline at sentence start, discussion as card */}
-            <div className="pl-4 space-y-1">
+            {/* Note content */}
+            <div className="px-3 py-2 space-y-1">
               {(() => {
-                // Build render rows: group inline actions (spotlight/laser) with next speech,
-                // but render discussion as its own block
-                type Row =
-                  | { kind: 'speech'; inlineActions: string[]; text: string }
-                  | { kind: 'discussion'; label?: string }
-                  | { kind: 'trailing'; inlineActions: string[] };
-                const rows: Row[] = [];
+                // Build render rows: group inline actions (spotlight/laser) with next speech
+                type RenderRow =
+                  | { kind: 'speech'; inlineActions: string[]; text: string; actionId: string }
+                  | { kind: 'standalone-action'; type: string; label?: string };
+
+                const rows: RenderRow[] = [];
                 let pendingInline: string[] = [];
+
                 for (const item of note.items) {
-                  if (item.kind === 'action' && item.type === 'discussion') {
-                    // Flush pending inline actions as trailing if any
-                    if (pendingInline.length > 0) {
-                      rows.push({
-                        kind: 'trailing',
-                        inlineActions: pendingInline,
-                      });
-                      pendingInline = [];
-                    }
-                    rows.push({ kind: 'discussion', label: item.label });
-                  } else if (item.kind === 'action') {
+                  if (item.kind === 'action' && ACTION_ICON_ONLY[item.type]) {
                     pendingInline.push(item.type);
-                  } else {
+                  } else if (item.kind === 'speech') {
                     rows.push({
                       kind: 'speech',
                       inlineActions: pendingInline,
                       text: item.text,
+                      actionId: item.actionId,
                     });
                     pendingInline = [];
+                  } else {
+                    if (pendingInline.length > 0) {
+                      rows.push({
+                        kind: 'speech',
+                        inlineActions: pendingInline,
+                        text: '',
+                        actionId: '',
+                      });
+                      pendingInline = [];
+                    }
+                    rows.push({
+                      kind: 'standalone-action',
+                      type: item.type,
+                      label: item.kind === 'action' ? item.label : undefined,
+                    });
                   }
                 }
                 if (pendingInline.length > 0) {
-                  rows.push({ kind: 'trailing', inlineActions: pendingInline });
+                  rows.push({ kind: 'speech', inlineActions: pendingInline, text: '', actionId: '' });
                 }
-                return rows.map((row, i) => {
-                  if (row.kind === 'discussion') {
+
+                return rows.map((row, rowIdx) => {
+                  if (row.kind === 'standalone-action') {
                     return (
-                      <div
-                        key={i}
-                        className="my-1.5 flex items-start gap-1.5 rounded-md border border-amber-200/60 dark:border-amber-700/30 bg-amber-50/60 dark:bg-amber-900/10 px-2 py-1.5"
-                      >
-                        <MessageSquare className="w-3 h-3 text-amber-500 dark:text-amber-400 shrink-0 mt-0.5" />
-                        <span className="text-[11px] leading-snug text-amber-800 dark:text-amber-300">
-                          {row.label}
+                      <p key={rowIdx} className="text-xs leading-relaxed text-gray-600 dark:text-gray-300">
+                        <span className="inline-flex items-center gap-1 border rounded-full px-2 py-0.5 text-[10px] bg-blue-50 dark:bg-blue-500/15 border-blue-200/40 dark:border-blue-500/30 text-blue-600 dark:text-blue-300">
+                          {row.label || row.type}
                         </span>
-                      </div>
+                      </p>
                     );
                   }
-                  const actions = row.kind === 'trailing' ? row.inlineActions : row.inlineActions;
+
+                  const isEditingThis =
+                    editing?.sceneId === note.sceneId && editing?.actionId === row.actionId;
+                  const isSavingThis = savingActionId === row.actionId;
+
                   return (
-                    <p
-                      key={i}
-                      className="text-[12px] leading-[1.8] text-gray-700 dark:text-gray-300"
-                    >
-                      {actions.map((a, j) => {
-                        const cfg = ACTION_ICON_ONLY[a];
-                        if (!cfg) return null;
-                        const { Icon, style } = cfg;
-                        return (
-                          <span
-                            key={j}
-                            className={cn(
-                              'inline-flex items-center justify-center w-4 h-4 rounded-full border align-middle mr-0.5',
-                              style,
+                    <div key={rowIdx} className="group relative">
+                      <p className="text-xs leading-relaxed text-gray-600 dark:text-gray-300 flex flex-wrap items-center gap-1">
+                        {row.inlineActions.map((actionType, i) => {
+                          const cfg = ACTION_ICON_ONLY[actionType];
+                          if (!cfg) return null;
+                          const { Icon } = cfg;
+                          return (
+                            <span
+                              key={i}
+                              className={cn(
+                                'inline-flex items-center justify-center w-4 h-4 rounded-full border shrink-0',
+                                cfg.style,
+                              )}
+                            >
+                              <Icon className="w-2.5 h-2.5" />
+                            </span>
+                          );
+                        })}
+
+                        {/* 编辑态 */}
+                        {isEditingThis ? null : (
+                          <>
+                            <span className="flex-1">{row.text}</span>
+                            {isSavingThis && (
+                              <Loader2 className="w-3 h-3 shrink-0 animate-spin text-purple-500" />
                             )}
-                          >
-                            <Icon className="w-2.5 h-2.5" />
-                          </span>
-                        );
-                      })}
-                      {row.kind === 'speech' ? row.text : null}
-                    </p>
+                            {!isSavingThis && row.actionId && (
+                              <button
+                                onClick={() => startEditing(note.sceneId, row.actionId, row.text)}
+                                className="opacity-0 group-hover:opacity-100 transition-opacity shrink-0 p-0.5 rounded hover:bg-gray-100 dark:hover:bg-gray-700 text-gray-400 hover:text-gray-600 dark:hover:text-gray-300"
+                                title="编辑话术"
+                              >
+                                <Pencil className="w-3 h-3" />
+                              </button>
+                            )}
+                          </>
+                        )}
+                      </p>
+
+                      {isEditingThis && (
+                        <div className="mt-1 space-y-1">
+                          <textarea
+                            ref={textareaRef}
+                            value={editing.text}
+                            onChange={(e) => setEditing((prev) => prev ? { ...prev, text: e.target.value } : null)}
+                            className="w-full text-xs leading-relaxed resize-none rounded-md border border-purple-300 dark:border-purple-600 bg-white dark:bg-gray-800 text-gray-700 dark:text-gray-200 px-2 py-1.5 focus:outline-none focus:ring-1 focus:ring-purple-400 dark:focus:ring-purple-500"
+                            autoFocus
+                            rows={3}
+                            onKeyDown={(e) => {
+                              if (e.key === 'Escape') cancelEditing();
+                              if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) saveEditing();
+                            }}
+                          />
+                          <div className="flex items-center gap-1 justify-end">
+                            <span className="text-[10px] text-gray-400 mr-auto">编辑后将重新生成语音</span>
+                            <button
+                              onClick={cancelEditing}
+                              className="flex items-center gap-0.5 text-[10px] px-2 py-0.5 rounded text-gray-500 hover:bg-gray-100 dark:hover:bg-gray-700"
+                            >
+                              <X className="w-3 h-3" /> 取消
+                            </button>
+                            <button
+                              onClick={saveEditing}
+                              className="flex items-center gap-0.5 text-[10px] px-2 py-0.5 rounded bg-purple-500 hover:bg-purple-600 text-white"
+                            >
+                              <Check className="w-3 h-3" /> 保存并重新生成语音
+                            </button>
+                          </div>
+                        </div>
+                      )}
+                    </div>
                   );
                 });
               })()}

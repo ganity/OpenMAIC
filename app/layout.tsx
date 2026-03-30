@@ -9,6 +9,7 @@ import { ThemeProvider } from '@/lib/hooks/use-theme';
 import { I18nProvider } from '@/lib/hooks/use-i18n';
 import { Toaster } from '@/components/ui/sonner';
 import { ServerProvidersInit } from '@/components/server-providers-init';
+import Script from 'next/script';
 
 const inter = localFont({
   src: '../node_modules/@fontsource-variable/inter/files/inter-latin-wght-normal.woff2',
@@ -33,6 +34,8 @@ export default function RootLayout({
         className={`${GeistSans.variable} ${GeistMono.variable} antialiased`}
         suppressHydrationWarning
       >
+        {/* Android WebView Chromium 61 兼容：globalThis polyfill */}
+        <Script strategy="beforeInteractive" dangerouslySetInnerHTML={{ __html: 'if(typeof globalThis==="undefined"){window.globalThis=window;}' }} />
         <ThemeProvider>
           <I18nProvider>
             <ServerProvidersInit />

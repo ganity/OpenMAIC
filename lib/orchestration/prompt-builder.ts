@@ -46,6 +46,8 @@ You are NOT the lead consultant — your responses should be noticeably shorter 
 interface DiscussionContext {
   topic: string;
   prompt?: string;
+  templateFamilyPrompt?: string;
+  reviewPolicyPrompt?: string;
 }
 
 // ==================== Peer Context ====================
@@ -122,6 +124,11 @@ You are advising for ${userProfile.nickname || 'a target learner or stakeholder'
 Personalize your analysis when relevant. Refer to them naturally when it improves the course positioning discussion.\n`
       : '';
 
+  const templateDiscussionSection =
+    discussionContext?.templateFamilyPrompt || discussionContext?.reviewPolicyPrompt
+      ? `\n# Template Guidance\n${discussionContext?.templateFamilyPrompt || ''}${discussionContext?.templateFamilyPrompt && discussionContext?.reviewPolicyPrompt ? '\n\n' : ''}${discussionContext?.reviewPolicyPrompt || ''}\n`
+      : '';
+
   // Build peer context section (what agents already said this round)
   const peerContext = buildPeerContextSection(agentResponses, agentConfig.name);
 
@@ -177,7 +184,7 @@ ${agentConfig.persona}
 
 ## Your Session Role
 ${roleGuideline}
-${studentProfileSection}${peerContext}${languageConstraint}
+${studentProfileSection}${peerContext}${templateDiscussionSection}${languageConstraint}
 # Output Format
 You MUST output a JSON array for ALL responses. Each element is an object with a \`type\` field:
 

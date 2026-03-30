@@ -139,6 +139,9 @@ export interface SettingsState {
   autoPlayLecture: boolean;
   playbackSpeed: PlaybackSpeed;
 
+  // Generation mode
+  generationMode: 'server' | 'stream';
+
   // Agent settings
   selectedAgentIds: string[];
   maxTurns: string;
@@ -161,6 +164,7 @@ export interface SettingsState {
   setPlaybackSpeed: (speed: PlaybackSpeed) => void;
   setSelectedAgentIds: (ids: string[]) => void;
   setMaxTurns: (turns: string) => void;
+  setGenerationMode: (mode: 'server' | 'stream') => void;
   setAgentMode: (mode: 'preset' | 'auto') => void;
   setAutoAgentCount: (count: number) => void;
 
@@ -516,6 +520,7 @@ export const useSettingsStore = create<SettingsState>()(
         ttsModel: migratedData?.ttsModel || 'openai-tts',
         selectedAgentIds: migratedData?.selectedAgentIds || ['default-1', 'default-2', 'default-3'],
         maxTurns: migratedData?.maxTurns?.toString() || '10',
+        generationMode: 'server' as const,
         agentMode: 'auto' as const,
         autoAgentCount: 3,
 
@@ -584,6 +589,7 @@ export const useSettingsStore = create<SettingsState>()(
         setSelectedAgentIds: (ids) => set({ selectedAgentIds: ids }),
 
         setMaxTurns: (turns) => set({ maxTurns: turns }),
+        setGenerationMode: (mode) => set({ generationMode: mode }),
         setAgentMode: (mode) => set({ agentMode: mode }),
         setAutoAgentCount: (count) => set({ autoAgentCount: count }),
 
@@ -1107,6 +1113,9 @@ export const useSettingsStore = create<SettingsState>()(
 
         if ((state as Record<string, unknown>).agentMode === undefined) {
           (state as Record<string, unknown>).agentMode = 'preset';
+        }
+        if ((state as Record<string, unknown>).generationMode === undefined) {
+          (state as Record<string, unknown>).generationMode = 'server';
         }
         if ((state as Record<string, unknown>).autoAgentCount === undefined) {
           (state as Record<string, unknown>).autoAgentCount = 3;

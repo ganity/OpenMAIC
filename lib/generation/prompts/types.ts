@@ -19,7 +19,12 @@ export type PromptId =
 /**
  * Snippet identifier
  */
-export type SnippetId = 'json-output-rules' | 'element-types' | 'action-types';
+export type SnippetId =
+  | 'json-output-rules'
+  | 'element-types'
+  | 'action-types'
+  | 'template-family-focus'
+  | 'template-guardrails';
 
 /**
  * Loaded prompt template

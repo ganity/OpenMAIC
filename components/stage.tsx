@@ -493,6 +493,18 @@ export function Stage({
         return ids.includes(agentId);
       },
       getPlaybackSpeed: () => useSettingsStore.getState().playbackSpeed || 1,
+      getLatestAudioUrl: (audioId: string) => {
+        // 实时从 store 查找最新的 audioUrl，支持 TTS 在 engine 创建后才生成完毕的场景
+        const scenes = useStageStore.getState().scenes;
+        for (const scene of scenes) {
+          for (const action of scene.actions || []) {
+            if ((action as { audioId?: string; audioUrl?: string }).audioId === audioId) {
+              return (action as { audioUrl?: string }).audioUrl;
+            }
+          }
+        }
+        return undefined;
+      },
       onComplete: () => {
         // lectureSpeech intentionally NOT cleared — last sentence stays visible
         // until scene transition (auto-play) or user restarts. Scene change

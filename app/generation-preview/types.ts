@@ -1,10 +1,11 @@
-import { ScanLine, Search, Bot, FileText, LayoutPanelLeft, Clapperboard } from 'lucide-react';
+import { ScanLine, Search, Bot, FileText, LayoutPanelLeft, Clapperboard, ServerCog } from 'lucide-react';
 import { useSettingsStore } from '@/lib/store/settings';
 import type {
   SceneOutline,
   UserRequirements,
   PdfImage,
   ImageMapping,
+  GenerationMetadata,
 } from '@/lib/types/generation';
 
 // Session state stored in sessionStorage
@@ -16,6 +17,7 @@ export interface GenerationSessionState {
   imageStorageIds?: string[];
   imageMapping?: ImageMapping;
   sceneOutlines?: SceneOutline[] | null;
+  generationMetadata?: GenerationMetadata;
   currentStep: 'generating' | 'complete';
   // PDF deferred parsing fields
   pdfStorageKey?: string;
@@ -78,6 +80,13 @@ export const ALL_STEPS: GenerationStep[] = [
     icon: Clapperboard,
     type: 'visual',
   },
+  {
+    id: 'server-generation',
+    title: 'generation.serverGenerating',
+    description: 'generation.serverGeneratingDesc',
+    icon: ServerCog,
+    type: 'visual',
+  },
 ];
 
 export const getActiveSteps = (session: GenerationSessionState | null) => {
@@ -85,6 +94,8 @@ export const getActiveSteps = (session: GenerationSessionState | null) => {
     if (step.id === 'pdf-analysis') return !!session?.pdfStorageKey;
     if (step.id === 'web-search') return !!session?.requirements?.webSearch;
     if (step.id === 'agent-generation') return useSettingsStore.getState().agentMode === 'auto';
+    // server-generation 步骤不再显示（由 outline/slide-content/actions 替代）
+    if (step.id === 'server-generation') return false;
     return true;
   });
 };

@@ -148,6 +148,7 @@ export const ChatArea = forwardRef<ChatAreaRef, ChatAreaProps>(
                   return {
                     kind: 'speech' as const,
                     text: (a as SpeechAction).text,
+                    actionId: a.id,
                   };
                 }
                 return {

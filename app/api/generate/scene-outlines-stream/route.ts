@@ -21,6 +21,9 @@ import {
   uniquifyMediaElementIds,
   formatTeacherPersonaForPrompt,
 } from '@/lib/generation/generation-pipeline';
+import { formatTrainingStrategyForPrompt, inferTemplateSelection } from '@/lib/generation/training-strategy';
+import { formatReviewPolicyPrompt, formatTemplateFamilyPrompt } from '@/lib/generation/template-prompt-config';
+import { appendTelemetryEvent } from '@/lib/server/telemetry';
 import type { AgentInfo } from '@/lib/generation/generation-pipeline';
 import { MAX_PDF_CONTENT_CHARS, MAX_VISION_IMAGES } from '@/lib/constants/generation';
 import { nanoid } from 'nanoid';
@@ -171,6 +174,57 @@ export async function POST(req: NextRequest) {
 
     // Build teacher context from agents (if available)
     const teacherContext = formatTeacherPersonaForPrompt(agents);
+    const strategy =
+      requirements.trainingStrategy ||
+      inferTemplateSelection({
+        requirement: requirements.requirement,
+        hasDocuments: Boolean(pdfText?.trim() || (pdfImages && pdfImages.length > 0)),
+        documentHints: pdfText,
+      });
+
+    log.info(
+      `[模板选择] family=${strategy.templateFamily} sourceMode=${strategy.sourceMode} riskLevel=${strategy.riskLevel} confidence=${strategy.confidence.overall} source=${requirements.trainingStrategy ? 'user_preset' : 'inferred'}`,
+    );
+
+    if (strategy.clarificationNeeded && strategy.clarificationQuestions?.length) {
+      const clarificationEvent = JSON.stringify({
+        type: 'clarification_needed',
+        metadata: {
+          trainingStrategy: strategy,
+          trainingType: strategy.trainingType,
+          templateFamily: strategy.templateFamily,
+          sourceMode: strategy.sourceMode,
+          riskLevel: strategy.riskLevel,
+          assessmentNeeded: strategy.assessmentNeeded,
+          confidenceOverall: strategy.confidence.overall,
+          selectionReason: strategy.selectionReason,
+          clarificationQuestions: strategy.clarificationQuestions,
+        },
+      });
+      return new Response(`data: ${clarificationEvent}\n\n`, {
+        headers: {
+          'Content-Type': 'text/event-stream; charset=utf-8',
+          'Cache-Control': 'no-cache, no-transform',
+          Connection: 'keep-alive',
+          'X-Accel-Buffering': 'no',
+        },
+      });
+    }
+
+    const trainingStrategy = formatTrainingStrategyForPrompt(strategy);
+    const templateFamilyPrompt = formatTemplateFamilyPrompt(strategy);
+    const reviewPolicyPrompt = formatReviewPolicyPrompt(strategy);
+    const metadata = {
+      trainingStrategy: strategy,
+      trainingType: strategy.trainingType,
+      templateFamily: strategy.templateFamily,
+      sourceMode: strategy.sourceMode,
+      riskLevel: strategy.riskLevel,
+      assessmentNeeded: strategy.assessmentNeeded,
+      confidenceOverall: strategy.confidence.overall,
+      selectionReason: strategy.selectionReason,
+      clarificationQuestions: strategy.clarificationQuestions || [],
+    };
 
     const prompts = buildPrompt(PROMPT_IDS.REQUIREMENTS_TO_OUTLINES, {
       requirement: requirements.requirement,
@@ -184,6 +238,9 @@ export async function POST(req: NextRequest) {
       researchContext: researchContext || (requirements.language === 'zh-CN' ? '无' : 'None'),
       mediaGenerationPolicy,
       teacherContext,
+      trainingStrategy,
+      templateFamilyPrompt,
+      reviewPolicyPrompt,
     });
 
     if (!prompts) {
@@ -317,10 +374,24 @@ export async function POST(req: NextRequest) {
           if (parsedOutlines.length > 0) {
             // Replace sequential gen_img_N/gen_vid_N with globally unique IDs
             const uniquifiedOutlines = uniquifyMediaElementIds(parsedOutlines);
+            await appendTelemetryEvent({
+              eventType: 'outline_selection_result',
+              payload: {
+                trainingType: metadata.trainingType || 'unknown',
+                templateFamily: metadata.templateFamily || 'unknown',
+                sourceMode: metadata.sourceMode || 'unknown',
+                riskLevel: metadata.riskLevel || 'unknown',
+                assessmentNeeded: metadata.assessmentNeeded ?? null,
+                confidenceOverall: metadata.confidenceOverall || 'unknown',
+                selectionReason: metadata.selectionReason || '',
+                outlinesCount: uniquifiedOutlines.length,
+              },
+            });
             // Send done event with all outlines
             const doneEvent = JSON.stringify({
               type: 'done',
               outlines: uniquifiedOutlines,
+              metadata,
             });
             controller.enqueue(encoder.encode(`data: ${doneEvent}\n\n`));
           } else {

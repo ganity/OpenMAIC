@@ -6,6 +6,7 @@ import type {
   GenerateClassroomInput,
   GenerateClassroomResult,
 } from '@/lib/server/classroom-generation';
+import type { SceneOutline } from '@/lib/types/generation';
 import {
   CLASSROOM_JOBS_DIR,
   ensureClassroomJobsDir,
@@ -33,6 +34,8 @@ export interface ClassroomGenerationJob {
   };
   scenesGenerated: number;
   totalScenes?: number;
+  outlines?: SceneOutline[];
+  classroomId?: string;
   result?: {
     classroomId: string;
     url: string;
@@ -190,6 +193,8 @@ export async function updateClassroomGenerationJobProgress(
     message: progress.message,
     scenesGenerated: progress.scenesGenerated,
     totalScenes: progress.totalScenes,
+    ...(progress.outlines ? { outlines: progress.outlines } : {}),
+    ...(progress.classroomId ? { classroomId: progress.classroomId } : {}),
   });
 }
 

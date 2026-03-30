@@ -25,6 +25,7 @@ import {
   generateMediaForClassroom,
   replaceMediaPlaceholders,
   generateTTSForClassroom,
+  generateTTSForScene,
 } from '@/lib/server/classroom-media-generation';
 import type { UserRequirements } from '@/lib/types/generation';
 import type { Scene, Stage } from '@/lib/types/stage';
@@ -40,6 +41,19 @@ export interface GenerateClassroomInput {
   enableVideoGeneration?: boolean;
   enableTTS?: boolean;
   agentMode?: 'default' | 'generate';
+  trainingType?: UserRequirements['trainingType'];
+  templateFamily?: UserRequirements['templateFamily'];
+  sourceMode?: UserRequirements['sourceMode'];
+  riskLevel?: UserRequirements['riskLevel'];
+  assessmentNeeded?: UserRequirements['assessmentNeeded'];
+  trainingStrategy?: UserRequirements['trainingStrategy'];
+  /** 用户侧模型配置，优先于服务端环境变量 */
+  modelConfig?: {
+    model?: string;
+    apiKey?: string;
+    baseUrl?: string;
+    providerType?: string;
+  };
 }
 
 export type ClassroomGenerationStep =
@@ -58,6 +72,8 @@ export interface ClassroomGenerationProgress {
   message: string;
   scenesGenerated: number;
   totalScenes?: number;
+  outlines?: import('@/lib/types/generation').SceneOutline[];
+  classroomId?: string;
 }
 
 export interface GenerateClassroomResult {
@@ -175,12 +191,20 @@ export async function generateClassroom(
     scenesGenerated: 0,
   });
 
-  const { model: languageModel, modelInfo, modelString } = resolveModel({});
-  log.info(`Using server-configured model: ${modelString}`);
+  const mc = input.modelConfig;
+  const { model: languageModel, modelInfo, modelString } = mc?.model || mc?.apiKey
+    ? resolveModel({
+        modelString: mc.model,
+        apiKey: mc.apiKey,
+        baseUrl: mc.baseUrl,
+        providerType: mc.providerType,
+      })
+    : resolveModel({});
+  log.info(`Using model: ${modelString}`);
 
   // Fail fast if the resolved provider has no API key configured
   const { providerId } = parseModelString(modelString);
-  const apiKey = resolveApiKey(providerId);
+  const apiKey = mc?.apiKey || resolveApiKey(providerId);
   if (!apiKey) {
     throw new Error(
       `No API key configured for provider "${providerId}". ` +
@@ -207,6 +231,12 @@ export async function generateClassroom(
   const requirements: UserRequirements = {
     requirement,
     language: lang,
+    ...(input.trainingType ? { trainingType: input.trainingType } : {}),
+    ...(input.templateFamily ? { templateFamily: input.templateFamily } : {}),
+    ...(input.sourceMode ? { sourceMode: input.sourceMode } : {}),
+    ...(input.riskLevel ? { riskLevel: input.riskLevel } : {}),
+    ...(input.assessmentNeeded != null ? { assessmentNeeded: input.assessmentNeeded } : {}),
+    ...(input.trainingStrategy ? { trainingStrategy: input.trainingStrategy } : {}),
   };
   const pdfText = pdfContent?.text || undefined;
 
@@ -289,6 +319,7 @@ export async function generateClassroom(
     message: `Generated ${outlines.length} scene outlines`,
     scenesGenerated: 0,
     totalScenes: outlines.length,
+    outlines,
   });
 
   const stageId = nanoid(10);
@@ -318,6 +349,7 @@ export async function generateClassroom(
       message: `Generating scene ${index + 1}/${outlines.length}: ${safeOutline.title}`,
       scenesGenerated: generatedScenes,
       totalScenes: outlines.length,
+      classroomId: stageId,
     });
 
     const content = await generateSceneContent(
@@ -345,6 +377,23 @@ export async function generateClassroom(
     }
 
     generatedScenes += 1;
+
+    // 每生成一个场景立即生成 TTS，使提前跳转后播放页能立即播放声音
+    if (input.enableTTS) {
+      const newScene = store.getState().scenes.find((s) => s.id === sceneId);
+      if (newScene) {
+        await generateTTSForScene(newScene, stageId, options.baseUrl).catch(
+          (e) => log.warn('Incremental TTS generation failed:', e),
+        );
+      }
+    }
+
+    // 每生成一个场景立即 persist，支持提前跳转后 classroom 页面能读到数据
+    const currentScenes = store.getState().scenes;
+    await persistClassroom({ id: stageId, stage, scenes: currentScenes }, options.baseUrl).catch(
+      (e) => log.warn('Incremental persist failed:', e),
+    );
+
     const progressEnd = 30 + Math.floor(((index + 1) / Math.max(outlines.length, 1)) * 60);
     await options.onProgress?.({
       step: 'generating_scenes',
@@ -352,6 +401,7 @@ export async function generateClassroom(
       message: `Generated ${generatedScenes}/${outlines.length} scenes`,
       scenesGenerated: generatedScenes,
       totalScenes: outlines.length,
+      classroomId: stageId,
     });
   }
 
@@ -363,6 +413,7 @@ export async function generateClassroom(
   }
 
   // Phase: Media generation (after all scenes generated)
+  log.info(`[Media] enableImageGeneration=${input.enableImageGeneration}, enableVideoGeneration=${input.enableVideoGeneration}`);
   if (input.enableImageGeneration || input.enableVideoGeneration) {
     await options.onProgress?.({
       step: 'generating_media',
@@ -373,12 +424,15 @@ export async function generateClassroom(
     });
 
     try {
+      log.info('[Media] Starting media generation...');
       const mediaMap = await generateMediaForClassroom(outlines, stageId, options.baseUrl);
       replaceMediaPlaceholders(scenes, mediaMap);
-      log.info(`Media generation complete: ${Object.keys(mediaMap).length} files`);
+      log.info(`[Media] Generation complete: ${Object.keys(mediaMap).length} files generated`);
     } catch (err) {
-      log.warn('Media generation phase failed, continuing:', err);
+      log.warn('[Media] Media generation phase failed, continuing:', err);
     }
+  } else {
+    log.info('[Media] Skipping media generation (disabled in input)');
   }
 
   // Phase: TTS generation

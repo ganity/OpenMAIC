@@ -11,6 +11,8 @@ import { useClipImage } from './useClipImage';
 import { useFilter } from './useFilter';
 import { ImageOutline } from './ImageOutline';
 import { ImageClipHandler } from './ImageClipHandler';
+import { useMediaGenerationStore, isMediaPlaceholder } from '@/lib/store/media-generation';
+import { useMediaStageId } from '@/lib/contexts/media-stage-context';
 
 export interface ImageElementProps {
   elementInfo: PPTImageElement;
@@ -30,6 +32,17 @@ export function ImageElement({ elementInfo, selectElement }: ImageElementProps) 
   const { flipStyle } = useElementFlip(elementInfo.flipH, elementInfo.flipV);
   const { clipShape, imgPosition } = useClipImage(elementInfo);
   const { filter } = useFilter(elementInfo.filters);
+
+  // 解析媒体占位符 → objectUrl（与 BaseImageElement 保持一致）
+  const stageId = useMediaStageId();
+  const isPlaceholder = !!stageId && isMediaPlaceholder(elementInfo.src);
+  const task = useMediaGenerationStore((s) => {
+    if (!isPlaceholder) return undefined;
+    const t = s.tasks[elementInfo.src];
+    if (t && t.stageId !== stageId) return undefined;
+    return t;
+  });
+  const resolvedSrc = task?.status === 'done' && task.objectUrl ? task.objectUrl : elementInfo.src;
 
   const isCliping = clipingImageElementId === elementInfo.id;
 
@@ -129,7 +142,7 @@ export function ImageElement({ elementInfo, selectElement }: ImageElementProps) 
               style={{ clipPath: clipShape.style }}
             >
               <img
-                src={elementInfo.src}
+                src={resolvedSrc}
                 draggable={false}
                 style={{
                   position: 'absolute',

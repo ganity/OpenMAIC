@@ -9,6 +9,12 @@
 
 {{teacherContext}}
 
+### Training Strategy
+
+{{trainingStrategy}}
+
+{{snippet:template-guardrails}}
+
 ## Available Resources
 
 - **Available Images**: {{assignedImages}}

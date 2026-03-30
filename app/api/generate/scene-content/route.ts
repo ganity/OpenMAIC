@@ -14,7 +14,7 @@ import {
   buildVisionUserContent,
 } from '@/lib/generation/generation-pipeline';
 import type { AgentInfo } from '@/lib/generation/generation-pipeline';
-import type { SceneOutline, PdfImage, ImageMapping } from '@/lib/types/generation';
+import type { SceneOutline, PdfImage, ImageMapping, GenerationMetadata } from '@/lib/types/generation';
 import { createLogger } from '@/lib/logger';
 import { apiError, apiSuccess } from '@/lib/server/api-response';
 import { resolveModelFromHeaders } from '@/lib/server/resolve-model';
@@ -34,6 +34,7 @@ export async function POST(req: NextRequest) {
       stageInfo,
       stageId,
       agents,
+      metadata,
     } = body as {
       outline: SceneOutline;
       allOutlines: SceneOutline[];
@@ -47,6 +48,7 @@ export async function POST(req: NextRequest) {
       };
       stageId: string;
       agents?: AgentInfo[];
+      metadata?: GenerationMetadata;
     };
 
     // Validate required fields
@@ -145,6 +147,7 @@ export async function POST(req: NextRequest) {
       hasVision,
       generatedMediaMapping,
       agents,
+      metadata,
     );
 
     if (!content) {
@@ -159,7 +162,7 @@ export async function POST(req: NextRequest) {
 
     log.info(`Content generated successfully: "${effectiveOutline.title}"`);
 
-    return apiSuccess({ content, effectiveOutline });
+    return apiSuccess({ content, effectiveOutline, metadata });
   } catch (error) {
     log.error('Scene content generation error:', error);
     return apiError('INTERNAL_ERROR', 500, error instanceof Error ? error.message : String(error));
